@@ -4,8 +4,8 @@ import costsAndActivations as caa
 
 # entire net
 class neuralNet(object):
-    def __init__(self, embeddings, outputActivation, hiddenLayerShapes, 
-                 hiddenLayerActivations, lossFunction='MSE', learningRate=.001, epochs=1, batchSize=1,
+    def __init__(self, embeddings, corpus, word2ind, outputActivation, hiddenLayerShapes, 
+                 hiddenLayerActivations, lossFunction='crossEntropyLoss', learningRate=.001, epochs=1,
                  adam=False, debug=False):
         # errors
         if len(hiddenLayerShapes)!=len(hiddenLayerActivations):
@@ -16,8 +16,10 @@ class neuralNet(object):
             print('Warning: Learning rate may be too high for ADAM optimizer to function properly')
         # variables straight from initialization
         self.embeddings = embeddings
-        self.embeddingsShape = embeddings.shape[0]
-        self.batchSize = batchSize
+        self.corpus = corpus
+        self.word2ind = word2ind
+        self.embeddingsShape = embeddings.shape[1]
+        self.numEmbeddings = embeddings.shape[0]
         self.epochs = epochs
         self.debug = debug
         self.adam = adam
@@ -37,28 +39,31 @@ class neuralNet(object):
                     self.allLayers["hiddenLayer{}".format(layerNum)] = neuronLayer(value, hiddenLayerShapes[count+1], adam)
        
         # adding output layer to dictionary of all layers
-        outputLayer = neuronLayer(hiddenLayerShapes[-1], self.embeddingsShape, adam)
+        outputLayer = neuronLayer(hiddenLayerShapes[-1], self.numEmbeddings, adam)
         self.allLayers['outputLayer'] = outputLayer
 
-        # to track error
-        self.error = None
+        # to track loss
+        self.loss = None
 
     # training methods
-    def forwardPass(self, corpus):
+    def forwardPass(self, text):
         # cycling through each word
-        for wordIndex in enumerate(corpus):
-            input = self.embeddingsself.word2ind[corpus[wordIndex]]
-            output = corpus[wordIndex+1]
+        localLoss = 0
+        for wordIndex in range(len(text)-1):
+            # selecting proper input embeddings
+            inputWord = text[wordIndex]
+            outputWord = text[wordIndex+1]
+            inputEmbedding = self.embeddings[self.word2ind[inputWord]]
+            # creating a onehot vector to use to calculate loss
+            outputOneHot = np.zeros(self.numEmbeddings)
+            outputOneHot[self.word2ind[outputWord]] = 1
+            print(self.word2ind[outputWord])
+            print(np.argmax(outputOneHot))
             # cycling through each layer
             for count, layerName in enumerate(self.allLayers.keys()):
                 layer = self.allLayers[layerName]
-                if self.batchSize>1:
-                    bias = np.tile(layer.b, (self.batchSize, 1))
-                else:
-                    bias = layer.b
-
                 # calculating dot product + activation
-                z = np.dot(input, layer.W) + bias
+                z = np.dot(inputEmbedding, layer.W) + layer.b
                 if self.activations[count] == 'relu':
                     layer.N = caa.relu(z)
                 elif self.activations[count]=='sigmoid':
@@ -69,14 +74,16 @@ class neuralNet(object):
                     layer.N = caa.softmax(z)
                 else:
                     raise Exception('Unknown activation function')
-                input = layer.N
+                inputEmbedding = layer.N
             # storing final error
-            if self.lossFunction == 'MSE':
-                self.error = caa.MSE(output, layer.N)
-            elif self.lossFunction == 'crossEntropyLoss':
-                self.error = caa.crossEntropyLoss(output, layer.N)
+            if self.lossFunction == 'crossEntropyLoss':
+                print('Pair Loss: ' + str(localLoss))
+                print()
+                localLoss += caa.crossEntropyLoss(outputOneHot, layer.N)
             else:
                 raise Exception('Unknown cost function')
+        self.loss = localLoss / (len(text)-1)
+        print(self.loss)
 
     def backwardPass(self, input, output):
         """
@@ -93,9 +100,6 @@ class neuralNet(object):
         # lists to hold the update values for weights and biases
         weightUpdates = []
         biasUpdates = []
-        # gradient of the cost function to start backpropogation
-        if self.lossFunction == 'MSE':
-            dCdH = caa.MSEgradient(output, self.allLayers['outputLayer'].N)
         # iterating through layers backwards for backpropogation
         for count, layerName in enumerate(reverseKeys):
             currLayer = self.allLayers[layerName]
@@ -117,15 +121,15 @@ class neuralNet(object):
             if layerName != 'hiddenLayer1':
                 prevLayer = self.allLayers[reverseKeys[count+1]]
                 # TODO: see if this should be divided by batch size
-                dCdW = np.dot(prevLayer.N.T, localError) / self.batchSize
-                dCdB = np.sum(localError, axis=0, keepdims=True) / self.batchSize # cost function WRT input biases - value used to update bias
+                dCdW = np.dot(prevLayer.N.T, localError)
+                dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
                 if currLayer.adam:
                     dCdW, dCdB = currLayer.updateAdam(dCdW, dCdB)
                 dCdH = np.dot(localError, currLayer.W.T)
             # weight and bias updates for when we hit the first hidden layer
             else:
-                dCdW = np.dot(input.T, localError) / self.batchSize
-                dCdB = np.sum(localError, axis=0, keepdims=True) / self.batchSize # cost function WRT input biases - value used to update bias
+                dCdW = np.dot(input.T, localError)
+                dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
                 if currLayer.adam:
                     dCdW, dCdB = currLayer.updateAdam(dCdW, dCdB)
             weightUpdates.append(dCdW)
@@ -137,16 +141,11 @@ class neuralNet(object):
             layer.b += -self.learningRate*(biasUpdates[count].reshape(-1,))
     
     # training model by repeatedly running forward and backward passes
-    def trainModel(self, input, output):
+    def trainModel(self, corpus):
         numSamples = input.shape[0]
         for epoch in range(self.epochs):
-            indices = np.random.permutation(numSamples)
-            inputShuffled = input[indices]
-            outputShuffled = output[indices]
-            for start in range(0, numSamples, self.batchSize):
-                end = min(start+self.batchSize, numSamples)
-                self.forwardPass(inputShuffled[start:end], outputShuffled[start:end])
-                self.backwardPass(inputShuffled[start:end], outputShuffled[start:end])
+            self.forwardPass(inputShuffled[start:end], outputShuffled[start:end])
+            self.backwardPass(inputShuffled[start:end], outputShuffled[start:end])
 
     # return predicted output for a given input
     def query(self, input):
