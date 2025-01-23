@@ -1,10 +1,12 @@
 import numpy as np
 class neuronLayer(object):
-    def __init__(self, prevLayerShape, outputShape, adam):
+    def __init__(self, prevLayerShape, outputShape, rnn=False, adam=False):
         self.prevLayerShape = prevLayerShape
         self.outputShape = outputShape
         xavier = np.sqrt(2/(self.prevLayerShape+self.outputShape))
-        self.W = np.random.normal(0,xavier, size=(self.prevLayerShape,self.outputShape))
+        self.layerW = np.random.normal(0,xavier, size=(self.prevLayerShape,self.outputShape))
+        if rnn:
+            self.timeW = np.zeros(shape=(outputShape, outputShape))
         self.b = np.zeros(shape=(outputShape))
         self.N = np.zeros(shape=(outputShape))
         # adam

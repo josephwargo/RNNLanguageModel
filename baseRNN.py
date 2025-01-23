@@ -31,16 +31,16 @@ class neuralNet(object):
         
         # initializing hidden layers and adding to dictionary of all layers
         hiddenLayer1 = neuronLayer(self.embeddingsShape, hiddenLayerShapes[0], adam)
-        self.allLayers = {'hiddenLayer1': hiddenLayer1}
+        self.layerToLayer = {'hiddenLayer1': hiddenLayer1}
         if len(hiddenLayerShapes) > 1:
             for count, value in enumerate(hiddenLayerShapes):
                 layerNum = count+2
                 if count<len(hiddenLayerShapes)-1:
-                    self.allLayers["hiddenLayer{}".format(layerNum)] = neuronLayer(value, hiddenLayerShapes[count+1], adam)
+                    self.layerToLayer["hiddenLayer{}".format(layerNum)] = neuronLayer(value, hiddenLayerShapes[count+1], adam)
        
         # adding output layer to dictionary of all layers
         outputLayer = neuronLayer(hiddenLayerShapes[-1], self.numEmbeddings, adam)
-        self.allLayers['outputLayer'] = outputLayer
+        self.layerToLayer['outputLayer'] = outputLayer
 
         # to track loss
         self.loss = None
@@ -57,13 +57,12 @@ class neuralNet(object):
             # creating a onehot vector to use to calculate loss
             outputOneHot = np.zeros(self.numEmbeddings)
             outputOneHot[self.word2ind[outputWord]] = 1
-            print(self.word2ind[outputWord])
-            print(np.argmax(outputOneHot))
             # cycling through each layer
-            for count, layerName in enumerate(self.allLayers.keys()):
-                layer = self.allLayers[layerName]
+            for count, layerName in enumerate(self.layerToLayer.keys()):
+                print(self.activations[count])
+                layer = self.layerToLayer[layerName]
                 # calculating dot product + activation
-                z = np.dot(inputEmbedding, layer.W) + layer.b
+                z = np.dot(inputEmbedding, layer.layerW) + layer.b
                 if self.activations[count] == 'relu':
                     layer.N = caa.relu(z)
                 elif self.activations[count]=='sigmoid':
@@ -77,13 +76,12 @@ class neuralNet(object):
                 inputEmbedding = layer.N
             # storing final error
             if self.lossFunction == 'crossEntropyLoss':
-                print('Pair Loss: ' + str(localLoss))
-                print()
+                # print('Pair Loss: ' + str(localLoss))
+                # print()
                 localLoss += caa.crossEntropyLoss(outputOneHot, layer.N)
             else:
                 raise Exception('Unknown cost function')
         self.loss = localLoss / (len(text)-1)
-        print(self.loss)
 
     def backwardPass(self, input, output):
         """
@@ -95,14 +93,14 @@ class neuralNet(object):
         B = bias
         X = input from previous layer
         """
-        reverseKeys = list(self.allLayers.keys())
+        reverseKeys = list(self.layerToLayer.keys())
         reverseKeys.reverse()
         # lists to hold the update values for weights and biases
         weightUpdates = []
         biasUpdates = []
         # iterating through layers backwards for backpropogation
         for count, layerName in enumerate(reverseKeys):
-            currLayer = self.allLayers[layerName]
+            currLayer = self.layerToLayer[layerName]
             # activation WRT output node value
             if self.reverseActivations[count] == 'relu':
                 dHdZ = caa.reluGradient(currLayer.N)
@@ -119,13 +117,13 @@ class neuralNet(object):
             
             # weight+bias updates, and the dCdH for the next round of backpropogation
             if layerName != 'hiddenLayer1':
-                prevLayer = self.allLayers[reverseKeys[count+1]]
+                prevLayer = self.layerToLayer[reverseKeys[count+1]]
                 # TODO: see if this should be divided by batch size
                 dCdW = np.dot(prevLayer.N.T, localError)
                 dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
                 if currLayer.adam:
                     dCdW, dCdB = currLayer.updateAdam(dCdW, dCdB)
-                dCdH = np.dot(localError, currLayer.W.T)
+                dCdH = np.dot(localError, currLayer.layerW.T)
             # weight and bias updates for when we hit the first hidden layer
             else:
                 dCdW = np.dot(input.T, localError)
@@ -136,8 +134,8 @@ class neuralNet(object):
             biasUpdates.append(dCdB)
         # updating weights and biases
         for count, layerName in enumerate(reverseKeys):
-            layer = self.allLayers[layerName]
-            layer.W += -self.learningRate*weightUpdates[count]
+            layer = self.layerToLayer[layerName]
+            layer.layerW += -self.learningRate*weightUpdates[count]
             layer.b += -self.learningRate*(biasUpdates[count].reshape(-1,))
     
     # training model by repeatedly running forward and backward passes
@@ -149,14 +147,14 @@ class neuralNet(object):
 
     # return predicted output for a given input
     def query(self, input):
-        for count, layerName in enumerate(self.allLayers.keys()):
-            layer = self.allLayers[layerName]
+        for count, layerName in enumerate(self.layerToLayer.keys()):
+            layer = self.layerToLayer[layerName]
             if self.activations[count] == 'relu':
-                input = caa.relu(np.dot(input, layer.W) + layer.b)
+                input = caa.relu(np.dot(input, layer.layerW) + layer.b)
             elif self.activations[count] == 'sigmoid':
-                input = caa.sigmoid(np.dot(input, layer.W) + layer.b)
+                input = caa.sigmoid(np.dot(input, layer.layerW) + layer.b)
             elif self.activations[count] == 'tanH':
-                input = caa.tanH(np.dot(input, layer.W) + layer.b)
+                input = caa.tanH(np.dot(input, layer.layerW) + layer.b)
             elif self.activations[count] == 'softmax':
-                input = caa.softmax(np.dot(input, layer.W) + layer.b)
+                input = caa.softmax(np.dot(input, layer.layerW) + layer.b)
         return input
