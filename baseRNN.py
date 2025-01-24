@@ -30,17 +30,17 @@ class neuralNet(object):
         self.reverseActivations.reverse()
         
         # initializing hidden layers and adding to dictionary of all layers
-        hiddenLayer1 = neuronLayer(self.embeddingsShape, hiddenLayerShapes[0], adam)
-        self.layerToLayer = {'hiddenLayer1': hiddenLayer1}
+        hiddenLayer1 = neuronLayer(self.embeddingsShape, hiddenLayerShapes[0], rnn=True, adam=adam)
+        self.layers = {'hiddenLayer1': hiddenLayer1}
         if len(hiddenLayerShapes) > 1:
             for count, value in enumerate(hiddenLayerShapes):
                 layerNum = count+2
                 if count<len(hiddenLayerShapes)-1:
-                    self.layerToLayer["hiddenLayer{}".format(layerNum)] = neuronLayer(value, hiddenLayerShapes[count+1], adam)
+                    self.layers["hiddenLayer{}".format(layerNum)] = neuronLayer(value, hiddenLayerShapes[count+1], rnn=True, adam=adam)
        
         # adding output layer to dictionary of all layers
-        outputLayer = neuronLayer(hiddenLayerShapes[-1], self.numEmbeddings, adam)
-        self.layerToLayer['outputLayer'] = outputLayer
+        outputLayer = neuronLayer(hiddenLayerShapes[-1], self.numEmbeddings, rnn=True, adam=adam)
+        self.layers['outputLayer'] = outputLayer
 
         # to track loss
         self.loss = None
@@ -58,11 +58,10 @@ class neuralNet(object):
             outputOneHot = np.zeros(self.numEmbeddings)
             outputOneHot[self.word2ind[outputWord]] = 1
             # cycling through each layer
-            for count, layerName in enumerate(self.layerToLayer.keys()):
-                print(self.activations[count])
-                layer = self.layerToLayer[layerName]
+            for count, layerName in enumerate(self.layers.keys()):
+                layer = self.layers[layerName]
                 # calculating dot product + activation
-                z = np.dot(inputEmbedding, layer.layerW) + layer.b
+                z = np.dot(inputEmbedding, layer.layerW) + np.dot(layer.N, layer.timeW) + layer.b
                 if self.activations[count] == 'relu':
                     layer.N = caa.relu(z)
                 elif self.activations[count]=='sigmoid':
@@ -76,12 +75,41 @@ class neuralNet(object):
                 inputEmbedding = layer.N
             # storing final error
             if self.lossFunction == 'crossEntropyLoss':
-                # print('Pair Loss: ' + str(localLoss))
-                # print()
                 localLoss += caa.crossEntropyLoss(outputOneHot, layer.N)
             else:
                 raise Exception('Unknown cost function')
         self.loss = localLoss / (len(text)-1)
+
+    def localError(self, count, currLayer, output):
+        if self.reverseActivations[count] == 'relu':
+            dHdZ = caa.reluGradient(currLayer.N)
+            localError = dCdH * dHdZ
+        elif self.reverseActivations[count] == 'sigmoid':
+            dHdZ = caa.sigmoidGradient(currLayer.N)
+            localError = dCdH * dHdZ
+        elif self.reverseActivations[count] == 'tanH':
+            dHdZ = caa.tanHGradient(currLayer.N)
+            localError = dCdH * dHdZ
+        # special case of softmax & cross entropy loss
+        elif self.reverseActivations[count] == 'softmax':
+            localError = caa.dCdZ(output, currLayer.N)
+        return localError
+
+    # activation WRT output node value
+    def localError(self, count, currLayer, dCdH, output):
+        if self.reverseActivations[count] == 'relu':
+            dHdZ = caa.reluGradient(currLayer.N)
+            localError = dCdH * dHdZ
+        elif self.reverseActivations[count] == 'sigmoid':
+            dHdZ = caa.sigmoidGradient(currLayer.N)
+            localError = dCdH * dHdZ
+        elif self.reverseActivations[count] == 'tanH':
+            dHdZ = caa.tanHGradient(currLayer.N)
+            localError = dCdH * dHdZ
+        # special case of softmax & cross entropy loss
+        elif self.reverseActivations[count] == 'softmax':
+            localError = caa.dCdZ(output, currLayer.N)
+        return localError
 
     def backwardPass(self, input, output):
         """
@@ -93,32 +121,21 @@ class neuralNet(object):
         B = bias
         X = input from previous layer
         """
-        reverseKeys = list(self.layerToLayer.keys())
+        reverseKeys = list(self.layers.keys())
         reverseKeys.reverse()
         # lists to hold the update values for weights and biases
         weightUpdates = []
         biasUpdates = []
+        dCdH=0
         # iterating through layers backwards for backpropogation
         for count, layerName in enumerate(reverseKeys):
-            currLayer = self.layerToLayer[layerName]
+            currLayer = self.layers[layerName]
             # activation WRT output node value
-            if self.reverseActivations[count] == 'relu':
-                dHdZ = caa.reluGradient(currLayer.N)
-                localError = dCdH * dHdZ
-            elif self.reverseActivations[count] == 'sigmoid':
-                dHdZ = caa.sigmoidGradient(currLayer.N)
-                localError = dCdH * dHdZ
-            elif self.reverseActivations[count] == 'tanH':
-                dHdZ = caa.tanHGradient(currLayer.N)
-                localError = dCdH * dHdZ
-            # special case of softmax & cross entropy loss
-            elif self.reverseActivations[count] == 'softmax':
-                localError = caa.dCdZ(output, currLayer.N)
+            localError = self.localError(count, currLayer, dCdH, output)
             
             # weight+bias updates, and the dCdH for the next round of backpropogation
             if layerName != 'hiddenLayer1':
-                prevLayer = self.layerToLayer[reverseKeys[count+1]]
-                # TODO: see if this should be divided by batch size
+                prevLayer = self.layers[reverseKeys[count+1]]
                 dCdW = np.dot(prevLayer.N.T, localError)
                 dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
                 if currLayer.adam:
@@ -134,7 +151,7 @@ class neuralNet(object):
             biasUpdates.append(dCdB)
         # updating weights and biases
         for count, layerName in enumerate(reverseKeys):
-            layer = self.layerToLayer[layerName]
+            layer = self.layers[layerName]
             layer.layerW += -self.learningRate*weightUpdates[count]
             layer.b += -self.learningRate*(biasUpdates[count].reshape(-1,))
     
@@ -147,8 +164,8 @@ class neuralNet(object):
 
     # return predicted output for a given input
     def query(self, input):
-        for count, layerName in enumerate(self.layerToLayer.keys()):
-            layer = self.layerToLayer[layerName]
+        for count, layerName in enumerate(self.layers.keys()):
+            layer = self.layers[layerName]
             if self.activations[count] == 'relu':
                 input = caa.relu(np.dot(input, layer.layerW) + layer.b)
             elif self.activations[count] == 'sigmoid':
