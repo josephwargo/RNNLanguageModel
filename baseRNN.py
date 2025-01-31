@@ -44,72 +44,43 @@ class neuralNet(object):
 
         # to track loss
         self.loss = None
+        self.losses = []
 
     # training methods
     def forwardPass(self, text):
+        
         # cycling through each word
         localLoss = 0
+
         for wordIndex in range(len(text)-1):
+            
             # selecting proper input embeddings
             inputWord = text[wordIndex]
             outputWord = text[wordIndex+1]
             inputEmbedding = self.embeddings[self.word2ind[inputWord]]
+            
             # creating a onehot vector to use to calculate loss
             outputOneHot = np.zeros(self.numEmbeddings)
             outputOneHot[self.word2ind[outputWord]] = 1
+            
             # cycling through each layer
             for count, layerName in enumerate(self.layers.keys()):
+                
                 layer = self.layers[layerName]
+                
                 # calculating dot product + activation
                 z = np.dot(inputEmbedding, layer.layerW) + np.dot(layer.N, layer.timeW) + layer.b
-                if self.activations[count] == 'relu':
-                    layer.N = caa.relu(z)
-                elif self.activations[count]=='sigmoid':
-                    layer.N = caa.sigmoid(z)
-                elif self.activations[count]=='tanH':
-                    layer.N = caa.tanH(z)
-                elif (self.activations[count]=='softmax'):
-                    layer.N = caa.softmax(z)
-                else:
-                    raise Exception('Unknown activation function')
+                layer.N = caa.activation(self.activations[count], z)
                 inputEmbedding = layer.N
-            # storing final error
+            
+            # storing local loss
             if self.lossFunction == 'crossEntropyLoss':
-                localLoss += caa.crossEntropyLoss(outputOneHot, layer.N)
+                self.losses.append(caa.crossEntropyLoss(outputOneHot, layer.N))
             else:
                 raise Exception('Unknown cost function')
-        self.loss = localLoss / (len(text)-1)
-
-    def localError(self, count, currLayer, output):
-        if self.reverseActivations[count] == 'relu':
-            dHdZ = caa.reluGradient(currLayer.N)
-            localError = dCdH * dHdZ
-        elif self.reverseActivations[count] == 'sigmoid':
-            dHdZ = caa.sigmoidGradient(currLayer.N)
-            localError = dCdH * dHdZ
-        elif self.reverseActivations[count] == 'tanH':
-            dHdZ = caa.tanHGradient(currLayer.N)
-            localError = dCdH * dHdZ
-        # special case of softmax & cross entropy loss
-        elif self.reverseActivations[count] == 'softmax':
-            localError = caa.dCdZ(output, currLayer.N)
-        return localError
-
-    # activation WRT output node value
-    def localError(self, count, currLayer, dCdH, output):
-        if self.reverseActivations[count] == 'relu':
-            dHdZ = caa.reluGradient(currLayer.N)
-            localError = dCdH * dHdZ
-        elif self.reverseActivations[count] == 'sigmoid':
-            dHdZ = caa.sigmoidGradient(currLayer.N)
-            localError = dCdH * dHdZ
-        elif self.reverseActivations[count] == 'tanH':
-            dHdZ = caa.tanHGradient(currLayer.N)
-            localError = dCdH * dHdZ
-        # special case of softmax & cross entropy loss
-        elif self.reverseActivations[count] == 'softmax':
-            localError = caa.dCdZ(output, currLayer.N)
-        return localError
+        
+        # calculating final loss (divided over all words in the text)
+        self.loss = np.mean(self.losses)
 
     def backwardPass(self, input, output):
         """
@@ -121,34 +92,44 @@ class neuralNet(object):
         B = bias
         X = input from previous layer
         """
+        # reversing layers to iterate backwards through
         reverseKeys = list(self.layers.keys())
         reverseKeys.reverse()
+        reverseLosses = list(self.losses)
+        reverseLosses.reverse()
         # lists to hold the update values for weights and biases
         weightUpdates = []
         biasUpdates = []
-        dCdH=0
-        # iterating through layers backwards for backpropogation
-        for count, layerName in enumerate(reverseKeys):
-            currLayer = self.layers[layerName]
-            # activation WRT output node value
-            localError = self.localError(count, currLayer, dCdH, output)
+        dCdH = 0
+
+        # iterating through time backwards
+        for loss in reverseLosses:
             
-            # weight+bias updates, and the dCdH for the next round of backpropogation
-            if layerName != 'hiddenLayer1':
-                prevLayer = self.layers[reverseKeys[count+1]]
-                dCdW = np.dot(prevLayer.N.T, localError)
-                dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
-                if currLayer.adam:
-                    dCdW, dCdB = currLayer.updateAdam(dCdW, dCdB)
-                dCdH = np.dot(localError, currLayer.layerW.T)
-            # weight and bias updates for when we hit the first hidden layer
-            else:
-                dCdW = np.dot(input.T, localError)
-                dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
-                if currLayer.adam:
-                    dCdW, dCdB = currLayer.updateAdam(dCdW, dCdB)
-            weightUpdates.append(dCdW)
-            biasUpdates.append(dCdB)
+
+            # iterating through layers backwards
+            for count, layerName in enumerate(reverseKeys):
+                
+                currLayer = self.layers[layerName]
+                
+                # activation WRT output node value
+                localError = caa.localError(self.reverseActivations[count], currLayer, dCdH, output)
+                
+                # weight+bias updates, and the dCdH for the next round of backpropogation (if not first hidden layer)
+                if layerName != 'hiddenLayer1':
+                    prevLayer = self.layers[reverseKeys[count+1]]
+                    dCdW = np.dot(prevLayer.N.T, localError)
+                    dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
+                    
+                    dCdH = np.dot(localError, currLayer.layerW.T)
+                
+                # weight and bias updates for when we hit the first hidden layer
+                else:
+                    dCdW = np.dot(input.T, localError)
+                    dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
+                    
+                weightUpdates.append(dCdW)
+                biasUpdates.append(dCdB)
+        
         # updating weights and biases
         for count, layerName in enumerate(reverseKeys):
             layer = self.layers[layerName]
