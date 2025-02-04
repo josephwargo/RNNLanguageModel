@@ -15,11 +15,14 @@ class neuralNet(object):
         if adam & (learningRate>.01):
             print('Warning: Learning rate may be too high for ADAM optimizer to function properly')
         # variables straight from initialization
+        # embeddings
         self.embeddings = embeddings
         self.corpus = corpus
         self.word2ind = word2ind
         self.embeddingsShape = embeddings.shape[1]
         self.numEmbeddings = embeddings.shape[0]
+        
+        # hyperparameters
         self.epochs = epochs
         self.debug = debug
         self.adam = adam
@@ -28,6 +31,10 @@ class neuralNet(object):
         self.activations = hiddenLayerActivations + [outputActivation]
         self.reverseActivations = self.activations.copy()
         self.reverseActivations.reverse()
+
+        # loss
+        self.loss = []
+        self.lossGradients = []
         
         # initializing hidden layers and adding to dictionary of all layers
         hiddenLayer1 = neuronLayer(self.embeddingsShape, hiddenLayerShapes[0], rnn=True, adam=adam)
@@ -42,18 +49,12 @@ class neuralNet(object):
         outputLayer = neuronLayer(hiddenLayerShapes[-1], self.numEmbeddings, rnn=True, adam=adam)
         self.layers['outputLayer'] = outputLayer
 
-        # to track loss
-        self.loss = None
-        self.losses = []
-
     # training methods
     def forwardPass(self, text):
-        
+        localLoss = []
+        self.lossGradients = []
         # cycling through each word
-        localLoss = 0
-
         for wordIndex in range(len(text)-1):
-            
             # selecting proper input embeddings
             inputWord = text[wordIndex]
             outputWord = text[wordIndex+1]
@@ -70,19 +71,21 @@ class neuralNet(object):
                 
                 # calculating dot product + activation
                 z = np.dot(inputEmbedding, layer.layerW) + np.dot(layer.N, layer.timeW) + layer.b
-                layer.N = caa.activation(self.activations[count], z)
-                inputEmbedding = layer.N
+                inputEmbedding = caa.activation(self.activations[count], z)
+                layer.N = inputEmbedding
+                layer.NMemory.append(inputEmbedding)
             
-            # storing local loss
+            # storing local loss and loss gradients
             if self.lossFunction == 'crossEntropyLoss':
-                self.losses.append(caa.crossEntropyLoss(outputOneHot, layer.N))
+                localLoss.append(caa.crossEntropyLoss(outputOneHot, layer.N))
+                self.lossGradients.append(caa.dCdZ(outputOneHot, layer.N))
             else:
                 raise Exception('Unknown cost function')
         
         # calculating final loss (divided over all words in the text)
-        self.loss = np.mean(self.losses)
+        self.loss.append(np.mean(localLoss))
 
-    def backwardPass(self, input, output):
+    def backwardPass(self, text):
         """
         Gradient Notation:
         C = cost function
@@ -95,46 +98,66 @@ class neuralNet(object):
         # reversing layers to iterate backwards through
         reverseKeys = list(self.layers.keys())
         reverseKeys.reverse()
-        reverseLosses = list(self.losses)
-        reverseLosses.reverse()
+        reverseLossGradients = list(self.lossGradients)
+        reverseLossGradients.reverse()
         # lists to hold the update values for weights and biases
-        weightUpdates = []
+        layerWeightUpdates = []
+        timeWeightUpdates = []
         biasUpdates = []
         dCdH = 0
 
         # iterating through time backwards
-        for loss in reverseLosses:
+        for reverseTimeStep in range(len(text)-1):
+            timeStep = len(reverseLossGradients) - reverseTimeStep
+            # getting proper local error
+            localError = reverseLossGradients[timeStep]
             
+            # selecting proper input embeddings
+            inputWord = text[timeStep]
+            inputEmbedding = self.embeddings[self.word2ind[inputWord]]
 
             # iterating through layers backwards
-            for count, layerName in enumerate(reverseKeys):
-                
+            for layerNum, layerName in enumerate(reverseKeys):
                 currLayer = self.layers[layerName]
-                
-                # activation WRT output node value
-                localError = caa.localError(self.reverseActivations[count], currLayer, dCdH, output)
                 
                 # weight+bias updates, and the dCdH for the next round of backpropogation (if not first hidden layer)
                 if layerName != 'hiddenLayer1':
-                    prevLayer = self.layers[reverseKeys[count+1]]
-                    dCdW = np.dot(prevLayer.N.T, localError)
+                    prevLayer = self.layers[reverseKeys[layerNum+1]]
+
+                    # determining hidden state to use to calculate gradient
+                    prevLayerAtCurrTime = prevLayer.NMemory[timeStep]
+                    currLayerAtPrevTime = currLayer.NMemory[timeStep-1]
+
+                    # calculating weight and bias gradients
+                    dCdLayerW = np.dot(prevLayerAtCurrTime.T, localError)
+                    dCdTimeW = np.dot(currLayerAtPrevTime.T, localError)
                     dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
                     
-                    dCdH = np.dot(localError, currLayer.layerW.T)
+                    # calculating loss gradient to pass back
+                    # TODO: determine how the gradient is passed back - see Notion for notes
+                    dCdLayerH = np.dot(localError, currLayer.layerW.T)
+                    dCdTimeH = np.dot(localError, currLayer.timeW.T)
                 
                 # weight and bias updates for when we hit the first hidden layer
                 else:
-                    dCdW = np.dot(input.T, localError)
+                    currLayerAtPrevTime = currLayer.NMemory[timeStep-1]
+                    dCdLayerW = np.dot(inputEmbedding.T, localError)
+                    dCdTimeW = np.dot(currLayerAtPrevTime.T, localError)
                     dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
                     
-                weightUpdates.append(dCdW)
+                layerWeightUpdates.append(dCdLayerW)
+                timeWeightUpdates.append(dCdTimeW)
                 biasUpdates.append(dCdB)
+
+                # activation WRT output node value
+                localError = caa.localError(self.reverseActivations[layerNum], currLayer, dCdH)
         
         # updating weights and biases
-        for count, layerName in enumerate(reverseKeys):
-            layer = self.layers[layerName]
-            layer.layerW += -self.learningRate*weightUpdates[count]
-            layer.b += -self.learningRate*(biasUpdates[count].reshape(-1,))
+        # for count, layerName in enumerate(reverseKeys):
+        #     layer = self.layers[layerName]
+        #     layer.layerW += -self.learningRate*layerWeightUpdates[count]
+        #     layer.timeW += -self.learningRate*timeWeightUpdates[count]
+        #     layer.b += -self.learningRate*(biasUpdates[count].reshape(-1,))
     
     # training model by repeatedly running forward and backward passes
     def trainModel(self, corpus):

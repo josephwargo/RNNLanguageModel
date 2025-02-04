@@ -9,6 +9,8 @@ class neuronLayer(object):
             self.timeW = np.zeros(shape=(outputShape, outputShape))
         self.b = np.zeros(shape=(outputShape))
         self.N = np.zeros(shape=(outputShape))
+        self.NMemory = []
+        
         # adam
         self.adam = adam
         if adam:

@@ -42,7 +42,7 @@ def softmax(x):
     return numerator / (denominator+10e-8)
 
 # special gradient for softmax & cross entropy loss
-def dCdZ(y, y_pred):
+def softmaxLocalError(y, y_pred):
     return y_pred-y
 
 # choosing activation
@@ -59,7 +59,7 @@ def activation(activationName, z):
         raise Exception('Unknown activation function')
 
 # choosing gradient
-def localError(activationName, currLayer, dCdH, output):
+def localError(activationName, currLayer, dCdH):
     if activationName == 'relu':
         dHdZ = reluGradient(currLayer.N)
         localError = dCdH * dHdZ
@@ -70,7 +70,5 @@ def localError(activationName, currLayer, dCdH, output):
         dHdZ = tanHGradient(currLayer.N)
         localError = dCdH * dHdZ
     # special case of softmax & cross entropy loss
-    elif activationName == 'softmax':
-        localError = dCdZ(output, currLayer.N)
     return localError
 
