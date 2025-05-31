@@ -29,7 +29,8 @@ def tanH(x):
 def tanHGradient(y):
     return 1 - y**2
 
-# no gradient function because this will only be paired with Cross Entropy Loss, and they have a joint gradient function
+# no gradient function because this will only be paired with Cross Entropy Loss,
+# and they have a joint gradient function
 def softmax(x):
     if len(x.shape)>1:
         normalization = np.max(x, axis=1, keepdims=True)
