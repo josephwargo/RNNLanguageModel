@@ -51,49 +51,53 @@ class neuralNet(object):
 
     # training methods
     def forwardPass(self, text):
+        ### Resetting losses and gradients in advance of forward pass ###
         # setting/resetting loss
         localLoss = [] # list to store the local loss to average at the end
         self.lossGradients = [] # list used to store loss gradients for backwards pass
-                                # resetting loss to 0 so we only store gradients from this
+                                # resetting list to empty so we only store gradients from this
                                 # instance of the forward pass
         
         # setting/resetting layer gradients
         for layerName in self.layers.keys():
-            layer = self.layers[layerName]
-
+            layer = self.layers[layerName] # layer
             layer.N = np.zeros(layer.N.shape) # hidden state at time 0
             layer.NMemory = [] # list to store hidden states (for BPTT)
 
-        # cycling through each word
+        ### Executing forward pass ###
+        # cycling through each word (timestep)
         for wordIndex in range(len(text)-1):
             # selecting proper input embeddings
             inputWord = text[wordIndex]
-            outputWord = text[wordIndex+1]
-            hiddenState = self.embeddings[self.word2ind[inputWord]]
+            inputHiddenState = self.embeddings[self.word2ind[inputWord]]
 
             # creating a onehot vector to use to calculate loss
+            outputWord = text[wordIndex+1]
             outputOneHot = np.zeros(self.numEmbeddings)
             outputOneHot[self.word2ind[outputWord]] = 1
             
             # cycling through each layer
             for count, layerName in enumerate(self.layers.keys()):
-                
                 layer = self.layers[layerName]
-                
-                # calculating dot product + activation
-                z = np.dot(hiddenState, layer.layerW) + np.dot(layer.N, layer.timeW) + layer.b # z = Uh + Wx + b
-                hiddenState = caa.activation(self.activations[count], z) # activation - depending on the layer
-                
-                # updating hidden state and hidden state memory
-                layer.N = hiddenState
-                layer.NMemory.append(hiddenState)
+                # for output layer
+                if layerName == 'outputLayer':
+                    pass
+                else:
+                    # calculating dot product and activation
+                    z = np.dot(inputHiddenState, layer.layerW) + np.dot(layer.N, layer.timeW) + layer.b # z = Uh + Wx + b
+                    inputHiddenState = caa.activation(self.activations[count], z) # activation - depending on the layer
+
+                    # updating hidden state and hidden state memory
+                    layer.N = inputHiddenState
+                    layer.NMemory.append(inputHiddenState)
+                    # layer.zMemory.append(z) # only necessary for select loss functions - commented out for now
             
             # storing local loss and loss gradients
             if self.lossFunction == 'crossEntropyLoss':
                 localLoss.append(caa.crossEntropyLoss(outputOneHot, layer.N))
                 self.lossGradients.append(caa.softmaxLocalError(outputOneHot, layer.N))
             else:
-                raise Exception('Unknown cost function')
+                raise Exception('Unknown loss function')
 
         # calculating final loss (divided over all words in the text)
         self.loss.append(np.mean(localLoss))

@@ -9,7 +9,8 @@ class neuronLayer(object):
             self.timeW = np.zeros(shape=(outputShape, outputShape))
         self.b = np.zeros(shape=(outputShape))
         self.N = np.zeros(shape=(outputShape))
-        self.NMemory = []
+        self.NMemory = [] # list to store hidden states for BPTT
+        self.zMemory = [] # list to store pre-activation hidden states for BPTT - not needed for all activations, but including in case necessary
         
         # adam
         self.adam = adam
