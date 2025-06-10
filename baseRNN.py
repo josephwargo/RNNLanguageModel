@@ -69,7 +69,7 @@ class neuralNet(object):
         for wordIndex in range(len(text)-1):
             # selecting proper input embeddings
             inputWord = text[wordIndex]
-            inputHiddenState = self.embeddings[self.word2ind[inputWord]]
+            prevLayerHiddenState = self.embeddings[self.word2ind[inputWord]]
 
             # creating a onehot vector to use to calculate loss
             outputWord = text[wordIndex+1]
@@ -81,21 +81,27 @@ class neuralNet(object):
                 layer = self.layers[layerName]
                 # for output layer
                 if layerName == 'outputLayer':
-                    pass
+                    z = np.dot(prevLayerHiddenState, layer.layerWeights) + layer.bias
+                    logits = caa.activation(self.activations[count], z)
+                    layer.thisLayerHiddenState = logits
+                    layer.thisLayerHiddenStateMemory.append(logits)
                 else:
                     # calculating dot product and activation
-                    z = np.dot(inputHiddenState, layer.layerW) + np.dot(layer.N, layer.timeW) + layer.b # z = Uh + Wx + b
-                    inputHiddenState = caa.activation(self.activations[count], z) # activation - depending on the layer
+                    layerDotProduct = np.dot(prevLayerHiddenState, layer.layerWeights)
+                    timeDotProduct = np.dot(layer.thisLayerHiddenState, layer.timeWeights)
+                    z = layerDotProduct + timeDotProduct + layer.bias # z = Uh + Wx + b
+                    
+                    prevLayerHiddenState = caa.activation(self.activations[count], z) # activation - depending on the layer
 
                     # updating hidden state and hidden state memory
-                    layer.N = inputHiddenState
-                    layer.NMemory.append(inputHiddenState)
+                    layer.thisLayerHiddenState = prevLayerHiddenState
+                    layer.thisLayerHiddenStateMemory.append(prevLayerHiddenState)
                     # layer.zMemory.append(z) # only necessary for select loss functions - commented out for now
             
             # storing local loss and loss gradients
             if self.lossFunction == 'crossEntropyLoss':
-                localLoss.append(caa.crossEntropyLoss(outputOneHot, layer.N))
-                self.lossGradients.append(caa.softmaxLocalError(outputOneHot, layer.N))
+                localLoss.append(caa.crossEntropyLoss(outputOneHot, logits))
+                self.lossGradients.append(caa.softmaxLocalError(outputOneHot, logits))
             else:
                 raise Exception('Unknown loss function')
 

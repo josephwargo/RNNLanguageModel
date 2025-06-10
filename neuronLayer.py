@@ -4,12 +4,12 @@ class neuronLayer(object):
         self.prevLayerShape = prevLayerShape
         self.outputShape = outputShape
         xavier = np.sqrt(2/(self.prevLayerShape+self.outputShape))
-        self.layerW = np.random.normal(0,xavier, size=(self.prevLayerShape,self.outputShape))
+        self.layerWeights = np.random.normal(0,xavier, size=(self.prevLayerShape,self.outputShape))
         if rnn:
-            self.timeW = np.zeros(shape=(outputShape, outputShape))
-        self.b = np.zeros(shape=(outputShape))
-        self.N = np.zeros(shape=(outputShape))
-        self.NMemory = [] # list to store hidden states for BPTT
+            self.timeWeights = np.zeros(shape=(outputShape, outputShape))
+        self.bias = np.zeros(shape=(outputShape))
+        self.thisLayerHiddenState = np.zeros(shape=(outputShape))
+        self.thisLayerHiddenStateMemory = [] # list to store hidden states for BPTT
         self.zMemory = [] # list to store pre-activation hidden states for BPTT - not needed for all activations, but including in case necessary
         
         # adam
