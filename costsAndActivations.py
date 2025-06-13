@@ -7,9 +7,19 @@ def MSEgradient(y, y_pred):
     return -(y-y_pred)
 
 # no gradient function because this will only be paired with softmax, and they have a joint gradient function
-def crossEntropyLoss(y, y_pred):
-    y_pred = np.clip(y_pred, 10e-8, (1-(10e-8)))
-    return -np.sum(y*np.log(y_pred))
+def crossEntropyLoss(yIndex, yPred):
+    # determining maxes to normalize
+    maxLogits = np.max(yPred) #, axis=1, keepdims=True)
+
+    # using log sum exp trick
+    normalizedExp = np.exp(yPred - maxLogits)
+    normalizedProbs = np.sum(normalizedExp) #, axis=1, keepdims=True)
+    logSumExp = maxLogits + np.log(normalizedProbs)
+
+    # geting the log probability
+    logProb = logSumExp - yPred[yIndex]
+
+    return logProb
 
 # functions to compute activation and gradient of activations
 def sigmoid(x):

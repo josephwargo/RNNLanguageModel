@@ -61,20 +61,20 @@ class neuralNet(object):
         # setting/resetting layer gradients
         for layerName in self.layers.keys():
             layer = self.layers[layerName] # layer
-            layer.N = np.zeros(layer.N.shape) # hidden state at time 0
-            layer.NMemory = [] # list to store hidden states (for BPTT)
+            layer.thisLayerHiddenState = np.zeros(layer.thisLayerHiddenState.shape) # hidden state at time 0
+            layer.thisLayerHiddenStateMemory = [] # list to store hidden states (for BPTT)
 
         ### Executing forward pass ###
         # cycling through each word (timestep)
         for wordIndex in range(len(text)-1):
             # selecting proper input embeddings
             inputWord = text[wordIndex]
-            prevLayerHiddenState = self.embeddings[self.word2ind[inputWord]]
+            inputVocabIndex = self.word2ind[inputWord]
+            prevLayerHiddenState = self.embeddings[inputVocabIndex]
 
-            # creating a onehot vector to use to calculate loss
+            # selecting index for output word
             outputWord = text[wordIndex+1]
-            outputOneHot = np.zeros(self.numEmbeddings)
-            outputOneHot[self.word2ind[outputWord]] = 1
+            outputVocabIndex = self.word2ind[outputWord]
             
             # cycling through each layer
             for count, layerName in enumerate(self.layers.keys()):
@@ -85,6 +85,7 @@ class neuralNet(object):
                     logits = caa.activation(self.activations[count], z)
                     layer.thisLayerHiddenState = logits
                     layer.thisLayerHiddenStateMemory.append(logits)
+
                 else:
                     # calculating dot product and activation
                     layerDotProduct = np.dot(prevLayerHiddenState, layer.layerWeights)
@@ -100,8 +101,11 @@ class neuralNet(object):
             
             # storing local loss and loss gradients
             if self.lossFunction == 'crossEntropyLoss':
-                localLoss.append(caa.crossEntropyLoss(outputOneHot, logits))
-                self.lossGradients.append(caa.softmaxLocalError(outputOneHot, logits))
+                
+                loss = caa.crossEntropyLoss(outputVocabIndex, logits)
+                # print(sum(outputOneHot))
+                localLoss.append(loss)
+                self.lossGradients.append(caa.softmaxLocalError(outputVocabIndex, logits))
             else:
                 raise Exception('Unknown loss function')
 
