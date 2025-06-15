@@ -8,9 +8,15 @@ class neuronLayer(object):
         if rnn:
             self.timeWeights = np.zeros(shape=(outputShape, outputShape))
         self.bias = np.zeros(shape=(outputShape))
-        self.thisLayerHiddenState = np.zeros(shape=(outputShape))
-        self.thisLayerHiddenStateMemory = [] # list to store hidden states for BPTT
-        self.zMemory = [] # list to store pre-activation hidden states for BPTT - not needed for all activations, but including in case necessary
+
+        self.prevLayerOutputMemory = []
+        self.prevTimeStepOutputMemory = []
+        self.thisLayerOutputMemory = []
+
+        self.thisLayerMostRecentOutput = np.zeros(shape=(outputShape))
+
+        self.thisLayerTimeLocalError = np.zeros(shape=(outputShape))
+
         
         # adam
         self.adam = adam

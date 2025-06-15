@@ -52,6 +52,7 @@ class neuralNet(object):
     # training methods
     def forwardPass(self, text):
         ### Resetting losses and gradients in advance of forward pass ###
+        
         # setting/resetting loss
         localLoss = [] # list to store the local loss to average at the end
         self.lossGradients = [] # list used to store loss gradients for backwards pass
@@ -61,8 +62,10 @@ class neuralNet(object):
         # setting/resetting layer gradients
         for layerName in self.layers.keys():
             layer = self.layers[layerName] # layer
-            layer.thisLayerHiddenState = np.zeros(layer.thisLayerHiddenState.shape) # hidden state at time 0
-            layer.thisLayerHiddenStateMemory = [] # list to store hidden states (for BPTT)
+            layer.thisLayerMostRecentOutput = np.zeros(layer.thisLayerMostRecentOutput.shape) # hidden state at time 0
+            self.prevLayerOutputMemory = [] # memory of hidden states from the previous layer in  this timestep
+            self.prevTimeStepOutputMemory = [] # memory of hidden states from this layer in the previous timestep
+            self.thisLayerOutputMemory = [] # memory of the output from this layer
 
         ### Executing forward pass ###
         # cycling through each word (timestep)
@@ -70,7 +73,7 @@ class neuralNet(object):
             # selecting proper input embeddings
             inputWord = text[wordIndex]
             inputVocabIndex = self.word2ind[inputWord]
-            prevLayerHiddenState = self.embeddings[inputVocabIndex]
+            prevLayerOutput = self.embeddings[inputVocabIndex]
 
             # selecting index for output word
             outputWord = text[wordIndex+1]
@@ -81,41 +84,52 @@ class neuralNet(object):
                 layer = self.layers[layerName]
                 # for output layer
                 if layerName == 'outputLayer':
-                    z = np.dot(prevLayerHiddenState, layer.layerWeights) + layer.bias
-                    logits = caa.activation(self.activations[count], z)
-                    layer.thisLayerHiddenState = logits
-                    layer.thisLayerHiddenStateMemory.append(logits)
+                    # adding previous layer hidden state to memory (for BPTT)
+                    layer.prevLayerOutputMemory.append(prevLayerOutput)
 
-                else:
-                    # calculating dot product and activation
-                    layerDotProduct = np.dot(prevLayerHiddenState, layer.layerWeights)
-                    timeDotProduct = np.dot(layer.thisLayerHiddenState, layer.timeWeights)
-                    z = layerDotProduct + timeDotProduct + layer.bias # z = Uh + Wx + b
+                    z = np.dot(prevLayerOutput, layer.layerWeights) + layer.bias
+                    logits = caa.activation(self.activations[count], z)
                     
-                    prevLayerHiddenState = caa.activation(self.activations[count], z) # activation - depending on the layer
+                    layer.thisLayerMostRecentOutput = prevLayerOutput
+
+                    # updating memory for BPTT
+                    
+                    # layer.prevTimeStepOutputMemory.append(logits)
+                # for non-output layers
+                else:
+                    # adding previous layer and timestep hidden states to memory (for BPTT)
+                    layer.prevLayerOutputMemory.append(prevLayerOutput)
+                    layer.prevTimeStepOutputMemory.append(layer.thisLayerMostRecentOutput)
+                    
+                    # calculating hidden state (dot products and activation)
+                    layerDotProduct = np.dot(prevLayerOutput, layer.layerWeights)
+                    timeDotProduct = np.dot(layer.thisLayerMostRecentOutput, layer.timeWeights)
+                    z = layerDotProduct + timeDotProduct + layer.bias # z = Uh + Wx + b
+                    hiddenState = caa.activation(self.activations[count], z) # activation - depending on the layer
 
                     # updating hidden state and hidden state memory
-                    layer.thisLayerHiddenState = prevLayerHiddenState
-                    layer.thisLayerHiddenStateMemory.append(prevLayerHiddenState)
-                    # layer.zMemory.append(z) # only necessary for select loss functions - commented out for now
-            
+                    layer.thisLayerMostRecentOutput = hiddenState
+                    layer.thisLayerOutputMemory.append(hiddenState)
+
+                    # updating so that this outputs hidden state feeds into 
+                    prevLayerOutput = hiddenState
+                    
             # storing local loss and loss gradients
             if self.lossFunction == 'crossEntropyLoss':
-                
                 loss = caa.crossEntropyLoss(outputVocabIndex, logits)
-                # print(sum(outputOneHot))
                 localLoss.append(loss)
-                self.lossGradients.append(caa.softmaxLocalError(outputVocabIndex, logits))
+                self.lossGradients.append(caa.softmaxLocalError(outputVocabIndex, logits)) # dLdH
             else:
                 raise Exception('Unknown loss function')
 
         # calculating final loss (divided over all words in the text)
-        self.loss.append(np.mean(localLoss))
+        meanLoss = np.mean(localLoss)
+        self.loss.append(meanLoss)
 
     def backwardPass(self, text):
         """
         Gradient Notation:
-        C = cost function
+        L = loss function
         H = activation
         Z = Wx + b
         W = weights
@@ -131,24 +145,94 @@ class neuralNet(object):
         layerWeightUpdates = []
         timeWeightUpdates = []
         biasUpdates = []
-        dCdH = 0
+        dLdH = 0
 
         # iterating through time backwards
-        for reverseTimeStep in range(len(text)-1):
-            timeStep = len(reverseLossGradients) - reverseTimeStep
-            # getting proper local error
-            localError = reverseLossGradients[timeStep]
+        for reverseTimeStep in range(1, len(text)):
+            timeStep = len(text) - reverseTimeStep - 1
+            
+            # getting proper local error that was stored during forward pass
+            layerLocalError = self.lossGradients[timeStep]
+            timeLocalError = 0
+
             
             # selecting proper input embeddings
             inputWord = text[timeStep]
             inputEmbedding = self.embeddings[self.word2ind[inputWord]]
 
+            # selecting proper input embeddings
+            inputWord = text[timeStep]
+            inputVocabIndex = self.word2ind[inputWord]
+            # inputWordEmbedding = self.embeddings[inputVocabIndex]
+
+            # selecting index for output word
+            # outputWord = text[timeStep+1]
+            # outputVocabIndex = self.word2ind[outputWord]
+
             # iterating through layers backwards
             for layerNum, layerName in enumerate(reverseKeys):
+
                 currLayer = self.layers[layerName]
                 
-                # weight+bias updates, and the dCdH for the next round of backpropogation (if not first hidden layer)
-                if layerName != 'hiddenLayer1':
+                if layerName == 'outputLayer':
+                    # dLossdZ (dLdZ) = stored during forward pass
+                    dLossdZ = layerLocalError
+
+                    # dLossdOutputWeights (dLdW)
+                    # dLdZ = stored during forward pass
+                    # dZdW
+                    prevLayerHiddenState = currLayer.prevLayerOutputMemory[timeStep]
+                    # dLdW = dLdZ * dZdW
+                    dLossdOutputWeights = np.outer(prevLayerHiddenState, dLossdZ)
+                    
+                    # dLossdOutputBias (dLdB)
+                    # dLdZ = stored during forward pass
+                    # dZdB = 1
+                    # dLdB = dLdZ * dZdB
+                    dLossdOutputBias = layerLocalError
+
+                    # dLossdPreviousHiddenLayer (dLdH)
+                    # dLdZ = stored during forward pass
+                    # dZdH = layerWeights
+                    # dLdH = dLdZ * dZdH
+                    dLossdPrevLayerHiddenState = np.dot(currLayer.layerWeights, layerLocalError)
+                    
+                    # updating localError to pass back
+                    layerLocalError = dLossdPrevLayerHiddenState
+                
+                else:
+                    # dLossdZ (dLdZ)
+                    # dLdH = passed back from previous layer
+                    # dLdZ
+                    # ***left off here***
+                    # ***left off here***
+                    # ***left off here***
+                    # ***left off here***
+                    dLossdZ = caa.localError(self.activations[currLayer], currLayer, layerLocalError+currLayer.thisLayerTimeLocalError)
+                    
+                    # dLossdTimeWeights (dLdWt)
+                    # dLdZ = calculated above
+                    # dZdWt
+                    prevTimeStepHiddenState = currLayer.prevTimeStepOutputMemory[timeStep]
+                    # dLdWt = dLdZ * dZdWt
+                    dLossdTimeWeights = np.dot(prevTimeStepHiddenState, dLossdZ)
+                    print(dLossdTimeWeights.shape)
+
+                    # dLossdLayerWeights (dLdWl)
+                    # dLdZ = calculated above
+                    # dZdWl = tbc
+                    # dLdWl = dLdZ * dZdWl
+                    
+                    # dLossdOutputBias (dLdB)
+                    # dLdZ = calculated above
+                    # dZdb = tbc
+                    # dLdWl = dLdZ * dZdb
+
+                    # dLossdPreviousHiddenLayer (dLdH)
+                    # dLdZ = calculated above
+                    # dZdH = tbc
+                    # dLdH = dLdZ * dZdH
+
                     prevLayer = self.layers[reverseKeys[layerNum+1]]
 
                     # determining hidden state to use to calculate gradient
@@ -166,18 +250,19 @@ class neuralNet(object):
                     dCdTimeH = np.dot(localError, currLayer.timeW.T)
                 
                 # weight and bias updates for when we hit the first hidden layer
-                else:
-                    currLayerAtPrevTime = currLayer.NMemory[timeStep-1]
-                    dCdLayerW = np.dot(inputEmbedding.T, localError)
-                    dCdTimeW = np.dot(currLayerAtPrevTime.T, localError)
-                    dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
+                # if 0==0:
+                # # else:
+                #     currLayerAtPrevTime = currLayer.NMemory[timeStep-1]
+                #     dCdLayerW = np.dot(inputEmbedding.T, localError)
+                #     dCdTimeW = np.dot(currLayerAtPrevTime.T, localError)
+                #     dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
                     
-                layerWeightUpdates.append(dCdLayerW)
-                timeWeightUpdates.append(dCdTimeW)
-                biasUpdates.append(dCdB)
+                # layerWeightUpdates.append(dCdLayerW)
+                # timeWeightUpdates.append(dCdTimeW)
+                # biasUpdates.append(dCdB)
 
                 # activation WRT output node value
-                localError = caa.localError(self.reverseActivations[layerNum], currLayer, dCdH)
+                # localError = caa.localError(self.reverseActivations[layerNum], currLayer, dCdH)
         
         # updating weights and biases
         # for count, layerName in enumerate(reverseKeys):
