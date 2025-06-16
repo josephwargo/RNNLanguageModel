@@ -203,25 +203,26 @@ class neuralNet(object):
                 else:
                     # dLossdZ (dLdZ)
                     # dLdH = passed back from previous layer
+                    dLdH = layerLocalError+currLayer.thisLayerTimeLocalError
+                    # hiddenState = most recent version of this hidden state
+                    hiddenState = currLayer.thisLayerOutputMemory[timeStep]
                     # dLdZ
-                    # ***left off here***
-                    # ***left off here***
-                    # ***left off here***
-                    # ***left off here***
-                    dLossdZ = caa.localError(self.activations[currLayer], currLayer, layerLocalError+currLayer.thisLayerTimeLocalError)
+                    dLossdZ = caa.localError(self.activations[layerNum], hiddenState, dLdH)
                     
                     # dLossdTimeWeights (dLdWt)
                     # dLdZ = calculated above
                     # dZdWt
                     prevTimeStepHiddenState = currLayer.prevTimeStepOutputMemory[timeStep]
                     # dLdWt = dLdZ * dZdWt
-                    dLossdTimeWeights = np.dot(prevTimeStepHiddenState, dLossdZ)
-                    print(dLossdTimeWeights.shape)
+                    dLossdTimeWeights = np.outer(prevTimeStepHiddenState, dLossdZ)
+                    
 
                     # dLossdLayerWeights (dLdWl)
                     # dLdZ = calculated above
-                    # dZdWl = tbc
+                    # dZdWl
+                    prevLayerHiddenState = currLayer.prevLayerOutputMemory[timeStep]
                     # dLdWl = dLdZ * dZdWl
+                    dLossdLayerWeights = np.outer(prevLayerHiddenState, dLossdZ)
                     
                     # dLossdOutputBias (dLdB)
                     # dLdZ = calculated above

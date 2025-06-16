@@ -70,16 +70,16 @@ def activation(activationName, z):
         raise Exception('Unknown activation function')
 
 # choosing gradient
-def localError(activationName, currLayer, dCdH):
+def localError(activationName, hiddenState, dLdH):
     if activationName == 'relu':
-        dHdZ = reluGradient(currLayer.N)
-        localError = dCdH * dHdZ
+        dHdZ = reluGradient(hiddenState)
+        localError = dLdH * dHdZ
     elif activationName == 'sigmoid':
-        dHdZ = sigmoidGradient(currLayer.N)
-        localError = dCdH * dHdZ
+        dHdZ = sigmoidGradient(hiddenState)
+        localError = dLdH * dHdZ
     elif activationName == 'tanH':
-        dHdZ = tanHGradient(currLayer.N)
-        localError = dCdH * dHdZ
+        dHdZ = tanHGradient(hiddenState)
+        localError = dLdH * dHdZ
     # special case of softmax & cross entropy loss
     return localError
 
