@@ -9,13 +9,17 @@ class neuronLayer(object):
             self.timeWeights = np.zeros(shape=(outputShape, outputShape))
         self.bias = np.zeros(shape=(outputShape))
 
+        # storing hidden layer inputs and output during forward pass for BPTT
         self.prevLayerOutputMemory = []
         self.prevTimeStepOutputMemory = []
         self.thisLayerOutputMemory = []
-
         self.thisLayerMostRecentOutput = np.zeros(shape=(outputShape))
 
+        # storing gradients during backward pass for BPTT
         self.thisLayerTimeLocalError = np.zeros(shape=(outputShape))
+        self.timeWeightUpdates = []
+        self.layerWeightUpdates = []
+        self.biasUpdates = []
 
         
         # adam

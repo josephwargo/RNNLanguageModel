@@ -81,5 +81,6 @@ def localError(activationName, hiddenState, dLdH):
         dHdZ = tanHGradient(hiddenState)
         localError = dLdH * dHdZ
     # special case of softmax & cross entropy loss
+    # TBD
     return localError
 

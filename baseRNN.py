@@ -59,13 +59,20 @@ class neuralNet(object):
                                 # resetting list to empty so we only store gradients from this
                                 # instance of the forward pass
         
-        # setting/resetting layer gradients
+        # setting/resetting gradients & other stored variables
         for layerName in self.layers.keys():
+            # forward pass
             layer = self.layers[layerName] # layer
             layer.thisLayerMostRecentOutput = np.zeros(layer.thisLayerMostRecentOutput.shape) # hidden state at time 0
-            self.prevLayerOutputMemory = [] # memory of hidden states from the previous layer in  this timestep
-            self.prevTimeStepOutputMemory = [] # memory of hidden states from this layer in the previous timestep
-            self.thisLayerOutputMemory = [] # memory of the output from this layer
+            layer.prevLayerOutputMemory = [] # memory of hidden states from the previous layer in  this timestep
+            layer.prevTimeStepOutputMemory = [] # memory of hidden states from this layer in the previous timestep
+            layer.thisLayerOutputMemory = [] # memory of the output from this layer
+
+            # backward pass
+            layer.thisLayerTimeLocalError = np.zeros(shape=(layer.thisLayerTimeLocalError.shape))
+            layer.timeWeightUpdates = []
+            layer.layerWeightUpdates = []
+            layer.biasUpdates = []
 
         ### Executing forward pass ###
         # cycling through each word (timestep)
@@ -155,7 +162,6 @@ class neuralNet(object):
             layerLocalError = self.lossGradients[timeStep]
             timeLocalError = 0
 
-            
             # selecting proper input embeddings
             inputWord = text[timeStep]
             inputEmbedding = self.embeddings[self.word2ind[inputWord]]
@@ -171,7 +177,8 @@ class neuralNet(object):
 
             # iterating through layers backwards
             for layerNum, layerName in enumerate(reverseKeys):
-
+                # TODO: move activation name to be part of the neuronLayer class
+                layerNum = len(reverseKeys) - 1 - layerNum
                 currLayer = self.layers[layerName]
                 
                 if layerName == 'outputLayer':
@@ -199,6 +206,10 @@ class neuralNet(object):
                     
                     # updating localError to pass back
                     layerLocalError = dLossdPrevLayerHiddenState
+
+                    # adding gradients to list for weight updates
+                    currLayer.layerWeightUpdates.append(dLossdOutputWeights)
+                    currLayer.biasUpdates.append(dLossdOutputBias)
                 
                 else:
                     # dLossdZ (dLdZ)
@@ -216,7 +227,6 @@ class neuralNet(object):
                     # dLdWt = dLdZ * dZdWt
                     dLossdTimeWeights = np.outer(prevTimeStepHiddenState, dLossdZ)
                     
-
                     # dLossdLayerWeights (dLdWl)
                     # dLdZ = calculated above
                     # dZdWl
@@ -226,33 +236,29 @@ class neuralNet(object):
                     
                     # dLossdOutputBias (dLdB)
                     # dLdZ = calculated above
-                    # dZdb = tbc
+                    # dZdb = 1
                     # dLdWl = dLdZ * dZdb
+                    dLossdOutputBias = dLossdZ
 
                     # dLossdPreviousHiddenLayer (dLdH)
                     # dLdZ = calculated above
-                    # dZdH = tbc
+                    # dZdH = layerWeights
                     # dLdH = dLdZ * dZdH
-
-                    prevLayer = self.layers[reverseKeys[layerNum+1]]
-
-                    # determining hidden state to use to calculate gradient
-                    prevLayerAtCurrTime = prevLayer.NMemory[timeStep]
-                    currLayerAtPrevTime = currLayer.NMemory[timeStep-1]
-
-                    # calculating weight and bias gradients
-                    dCdLayerW = np.dot(prevLayerAtCurrTime.T, localError)
-                    dCdTimeW = np.dot(currLayerAtPrevTime.T, localError)
-                    dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
+                    layerLocalError = np.dot(currLayer.layerWeights, dLossdZ)
                     
-                    # calculating loss gradient to pass back
-                    # TODO: determine how the gradient is passed back - see Notion for notes
-                    dCdLayerH = np.dot(localError, currLayer.layerW.T)
-                    dCdTimeH = np.dot(localError, currLayer.timeW.T)
-                
+                    # dLossdPreviousTimeStep (dLdH)
+                    # dLdZ = calculated above
+                    # dZdH = timeWeights
+                    # dLdH = dLdZ * dZdH
+                    currLayer.thisLayerTimeLocalError = np.dot(currLayer.timeWeights, dLossdZ)
+
+                    # adding gradients to list for weight updates
+                    currLayer.layerWeightUpdates.append(dLossdLayerWeights)
+                    currLayer.timeWeightUpdates.append(dLossdTimeWeights)
+                    currLayer.biasUpdates.append(dLossdOutputBias)
+
                 # weight and bias updates for when we hit the first hidden layer
-                # if 0==0:
-                # # else:
+                # else:
                 #     currLayerAtPrevTime = currLayer.NMemory[timeStep-1]
                 #     dCdLayerW = np.dot(inputEmbedding.T, localError)
                 #     dCdTimeW = np.dot(currLayerAtPrevTime.T, localError)
@@ -266,11 +272,16 @@ class neuralNet(object):
                 # localError = caa.localError(self.reverseActivations[layerNum], currLayer, dCdH)
         
         # updating weights and biases
-        # for count, layerName in enumerate(reverseKeys):
-        #     layer = self.layers[layerName]
-        #     layer.layerW += -self.learningRate*layerWeightUpdates[count]
-        #     layer.timeW += -self.learningRate*timeWeightUpdates[count]
-        #     layer.b += -self.learningRate*(biasUpdates[count].reshape(-1,))
+        for count, layerName in enumerate(reverseKeys):
+            currLayer = self.layers[layerName]
+
+            layerWeightUpdate = np.sum(currLayer.layerWeightUpdates)
+            timeWeightUpdate = np.sum(currLayer.timeWeightUpdates)
+            biasUpdate = np.sum(currLayer.biasUpdates)
+            
+            currLayer.layerWeights += -self.learningRate*layerWeightUpdate
+            currLayer.timeWeights += -self.learningRate*timeWeightUpdate
+            currLayer.bias += -self.learningRate*biasUpdate
     
     # training model by repeatedly running forward and backward passes
     def trainModel(self, corpus):
