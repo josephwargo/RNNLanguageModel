@@ -37,16 +37,19 @@ class neuralNet(object):
         self.lossGradients = []
         
         # initializing hidden layers and adding to dictionary of all layers
-        hiddenLayer1 = neuronLayer(self.embeddingsShape, hiddenLayerShapes[0], rnn=True, adam=adam)
+        hiddenLayer1 = neuronLayer(self.embeddingsShape, hiddenLayerShapes[0],
+                                   hiddenLayerActivations[0], rnn=True, adam=adam)
         self.layers = {'hiddenLayer1': hiddenLayer1}
         if len(hiddenLayerShapes) > 1:
-            for count, value in enumerate(hiddenLayerShapes):
+            for count, inputShape in enumerate(hiddenLayerShapes):
                 layerNum = count+2
                 if count<len(hiddenLayerShapes)-1:
-                    self.layers["hiddenLayer{}".format(layerNum)] = neuronLayer(value, hiddenLayerShapes[count+1], rnn=True, adam=adam)
+                    self.layers["hiddenLayer{}".format(layerNum)] = neuronLayer(
+                        inputShape, hiddenLayerShapes[count+1], hiddenLayerActivations[count+1], rnn=True, adam=adam)
        
         # adding output layer to dictionary of all layers
-        outputLayer = neuronLayer(hiddenLayerShapes[-1], self.numEmbeddings, rnn=True, adam=adam)
+        outputLayer = neuronLayer(
+            hiddenLayerShapes[-1], self.numEmbeddings, outputActivation, rnn=True, adam=adam)
         self.layers['outputLayer'] = outputLayer
 
     # training methods
@@ -95,7 +98,7 @@ class neuralNet(object):
                     layer.prevLayerOutputMemory.append(prevLayerOutput)
 
                     z = np.dot(prevLayerOutput, layer.layerWeights) + layer.bias
-                    logits = caa.activation(self.activations[count], z)
+                    logits = caa.activation(layer.activation, z)
                     
                     layer.thisLayerMostRecentOutput = prevLayerOutput
 
@@ -112,7 +115,7 @@ class neuralNet(object):
                     layerDotProduct = np.dot(prevLayerOutput, layer.layerWeights)
                     timeDotProduct = np.dot(layer.thisLayerMostRecentOutput, layer.timeWeights)
                     z = layerDotProduct + timeDotProduct + layer.bias # z = Uh + Wx + b
-                    hiddenState = caa.activation(self.activations[count], z) # activation - depending on the layer
+                    hiddenState = caa.activation(layer.activation, z) # activation - depending on the layer
 
                     # updating hidden state and hidden state memory
                     layer.thisLayerMostRecentOutput = hiddenState
@@ -146,12 +149,9 @@ class neuralNet(object):
         # reversing layers to iterate backwards through
         reverseKeys = list(self.layers.keys())
         reverseKeys.reverse()
-        reverseLossGradients = list(self.lossGradients)
-        reverseLossGradients.reverse()
+        # reverseLossGradients = list(self.lossGradients)
+        # reverseLossGradients.reverse()
         # lists to hold the update values for weights and biases
-        layerWeightUpdates = []
-        timeWeightUpdates = []
-        biasUpdates = []
         dLdH = 0
 
         # iterating through time backwards
@@ -177,7 +177,6 @@ class neuralNet(object):
 
             # iterating through layers backwards
             for layerNum, layerName in enumerate(reverseKeys):
-                # TODO: move activation name to be part of the neuronLayer class
                 layerNum = len(reverseKeys) - 1 - layerNum
                 currLayer = self.layers[layerName]
                 
@@ -218,7 +217,7 @@ class neuralNet(object):
                     # hiddenState = most recent version of this hidden state
                     hiddenState = currLayer.thisLayerOutputMemory[timeStep]
                     # dLdZ
-                    dLossdZ = caa.localError(self.activations[layerNum], hiddenState, dLdH)
+                    dLossdZ = caa.localError(currLayer.activation, hiddenState, dLdH)
                     
                     # dLossdTimeWeights (dLdWt)
                     # dLdZ = calculated above
@@ -256,31 +255,27 @@ class neuralNet(object):
                     currLayer.layerWeightUpdates.append(dLossdLayerWeights)
                     currLayer.timeWeightUpdates.append(dLossdTimeWeights)
                     currLayer.biasUpdates.append(dLossdOutputBias)
-
-                # weight and bias updates for when we hit the first hidden layer
-                # else:
-                #     currLayerAtPrevTime = currLayer.NMemory[timeStep-1]
-                #     dCdLayerW = np.dot(inputEmbedding.T, localError)
-                #     dCdTimeW = np.dot(currLayerAtPrevTime.T, localError)
-                #     dCdB = np.sum(localError, axis=0, keepdims=True) # cost function WRT input biases - value used to update bias
-                    
-                # layerWeightUpdates.append(dCdLayerW)
-                # timeWeightUpdates.append(dCdTimeW)
-                # biasUpdates.append(dCdB)
-
-                # activation WRT output node value
-                # localError = caa.localError(self.reverseActivations[layerNum], currLayer, dCdH)
         
         # updating weights and biases
         for count, layerName in enumerate(reverseKeys):
             currLayer = self.layers[layerName]
 
-            layerWeightUpdate = np.sum(currLayer.layerWeightUpdates)
-            timeWeightUpdate = np.sum(currLayer.timeWeightUpdates)
-            biasUpdate = np.sum(currLayer.biasUpdates)
+            # layer weight calculation
+            layerWeightUpdate = np.stack(currLayer.layerWeightUpdates).sum(axis=0)
+            # print(currLayer.layerWeightUpdates[1])
+
+            # time weight calculation
+            if len(currLayer.timeWeightUpdates) > 0:
+                timeWeightUpdate = np.stack(currLayer.timeWeightUpdates).sum(axis=0)
+
             
+            # bias calculation
+            biasUpdate = np.stack(currLayer.biasUpdates).sum(axis=0)
+            
+            # updates
             currLayer.layerWeights += -self.learningRate*layerWeightUpdate
-            currLayer.timeWeights += -self.learningRate*timeWeightUpdate
+            if len(currLayer.timeWeightUpdates) > 0:
+                currLayer.timeWeights += -self.learningRate*timeWeightUpdate
             currLayer.bias += -self.learningRate*biasUpdate
     
     # training model by repeatedly running forward and backward passes
@@ -294,12 +289,12 @@ class neuralNet(object):
     def query(self, input):
         for count, layerName in enumerate(self.layers.keys()):
             layer = self.layers[layerName]
-            if self.activations[count] == 'relu':
+            if layer.activation == 'relu':
                 input = caa.relu(np.dot(input, layer.layerW) + layer.b)
-            elif self.activations[count] == 'sigmoid':
+            elif layer.activation == 'sigmoid':
                 input = caa.sigmoid(np.dot(input, layer.layerW) + layer.b)
-            elif self.activations[count] == 'tanH':
+            elif layer.activation == 'tanH':
                 input = caa.tanH(np.dot(input, layer.layerW) + layer.b)
-            elif self.activations[count] == 'softmax':
+            elif layer.activation == 'softmax':
                 input = caa.softmax(np.dot(input, layer.layerW) + layer.b)
         return input

@@ -1,6 +1,8 @@
 import numpy as np
 class neuronLayer(object):
-    def __init__(self, prevLayerShape, outputShape, rnn=False, adam=False):
+    def __init__(self, prevLayerShape, outputShape, activation, rnn=False, adam=False):
+
+        # layer info
         self.prevLayerShape = prevLayerShape
         self.outputShape = outputShape
         xavier = np.sqrt(2/(self.prevLayerShape+self.outputShape))
@@ -8,6 +10,9 @@ class neuronLayer(object):
         if rnn:
             self.timeWeights = np.zeros(shape=(outputShape, outputShape))
         self.bias = np.zeros(shape=(outputShape))
+
+        # activation
+        self.activation = activation
 
         # storing hidden layer inputs and output during forward pass for BPTT
         self.prevLayerOutputMemory = []
@@ -21,7 +26,6 @@ class neuronLayer(object):
         self.layerWeightUpdates = []
         self.biasUpdates = []
 
-        
         # adam
         self.adam = adam
         if adam:
