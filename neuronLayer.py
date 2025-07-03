@@ -22,9 +22,9 @@ class neuronLayer(object):
 
         # storing gradients during backward pass for BPTT
         self.thisLayerTimeLocalError = np.zeros(shape=(outputShape))
-        self.timeWeightUpdates = []
-        self.layerWeightUpdates = []
-        self.biasUpdates = []
+        self.timeWeightUpdates = 0
+        self.layerWeightUpdates = 0
+        self.biasUpdates = 0
 
         # adam
         self.adam = adam

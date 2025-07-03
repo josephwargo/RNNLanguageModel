@@ -53,8 +53,10 @@ def softmax(x):
     return numerator / (denominator+10e-8)
 
 # special gradient for softmax & cross entropy loss
-def softmaxLocalError(y, y_pred):
-    return y_pred-y
+def softmaxLocalError(wordIndex, logits):
+    prob = softmax(logits)
+    prob[wordIndex] -= 1.0
+    return prob
 
 # choosing activation
 def activation(activationName, z):

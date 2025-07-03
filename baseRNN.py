@@ -4,9 +4,9 @@ import costsAndActivations as caa
 
 # entire net
 class neuralNet(object):
-    def __init__(self, embeddings, corpus, word2ind, outputActivation, hiddenLayerShapes, 
+    def __init__(self, embeddings, word2ind, outputActivation, hiddenLayerShapes, 
                  hiddenLayerActivations, lossFunction='crossEntropyLoss', learningRate=.001, epochs=1,
-                 adam=False, debug=False):
+                 adam=False, clipVal=1, debug=False):
         # errors
         if len(hiddenLayerShapes)!=len(hiddenLayerActivations):
             raise Exception('Length of hiddenLayerShapes does not match length of hiddenLayerActivations')
@@ -17,7 +17,7 @@ class neuralNet(object):
         # variables straight from initialization
         # embeddings
         self.embeddings = embeddings
-        self.corpus = corpus
+        # self.corpus = corpus
         self.word2ind = word2ind
         self.embeddingsShape = embeddings.shape[1]
         self.numEmbeddings = embeddings.shape[0]
@@ -28,6 +28,7 @@ class neuralNet(object):
         self.adam = adam
         self.learningRate = learningRate
         self.lossFunction = lossFunction
+        self.clipVal = clipVal
         self.activations = hiddenLayerActivations + [outputActivation]
         self.reverseActivations = self.activations.copy()
         self.reverseActivations.reverse()
@@ -49,7 +50,7 @@ class neuralNet(object):
        
         # adding output layer to dictionary of all layers
         outputLayer = neuronLayer(
-            hiddenLayerShapes[-1], self.numEmbeddings, outputActivation, rnn=True, adam=adam)
+            prevLayerShape=hiddenLayerShapes[-1], outputShape=self.numEmbeddings, activation=outputActivation, rnn=True, adam=adam)
         self.layers['outputLayer'] = outputLayer
 
     # training methods
@@ -73,9 +74,9 @@ class neuralNet(object):
 
             # backward pass
             layer.thisLayerTimeLocalError = np.zeros(shape=(layer.thisLayerTimeLocalError.shape))
-            layer.timeWeightUpdates = []
-            layer.layerWeightUpdates = []
-            layer.biasUpdates = []
+            layer.timeWeightUpdates = 0
+            layer.layerWeightUpdates = 0
+            layer.biasUpdates = 0
 
         ### Executing forward pass ###
         # cycling through each word (timestep)
@@ -98,7 +99,7 @@ class neuralNet(object):
                     layer.prevLayerOutputMemory.append(prevLayerOutput)
 
                     z = np.dot(prevLayerOutput, layer.layerWeights) + layer.bias
-                    logits = caa.activation(layer.activation, z)
+                    logits = z #caa.activation(layer.activation, z)
                     
                     layer.thisLayerMostRecentOutput = prevLayerOutput
 
@@ -137,38 +138,21 @@ class neuralNet(object):
         self.loss.append(meanLoss)
 
     def backwardPass(self, text):
-        """
-        Gradient Notation:
-        L = loss function
-        H = activation
-        Z = Wx + b
-        W = weights
-        B = bias
-        X = input from previous layer
-        """
+        numSteps = len(text)
         # reversing layers to iterate backwards through
         reverseKeys = list(self.layers.keys())
         reverseKeys.reverse()
-        # reverseLossGradients = list(self.lossGradients)
-        # reverseLossGradients.reverse()
-        # lists to hold the update values for weights and biases
-        dLdH = 0
 
         # iterating through time backwards
-        for reverseTimeStep in range(1, len(text)):
-            timeStep = len(text) - reverseTimeStep - 1
+        for reverseTimeStep in range(1, numSteps):
+            timeStep = numSteps - reverseTimeStep - 1
             
             # getting proper local error that was stored during forward pass
             layerLocalError = self.lossGradients[timeStep]
-            timeLocalError = 0
 
-            # selecting proper input embeddings
-            inputWord = text[timeStep]
-            inputEmbedding = self.embeddings[self.word2ind[inputWord]]
-
-            # selecting proper input embeddings
-            inputWord = text[timeStep]
-            inputVocabIndex = self.word2ind[inputWord]
+            # NOT RELEVANT UNLESS WE WANT TO UPDATE EMBEDDINGS selecting proper input embeddings
+            # inputWord = text[timeStep]
+            # inputVocabIndex = self.word2ind[inputWord]
             # inputWordEmbedding = self.embeddings[inputVocabIndex]
 
             # selecting index for output word
@@ -181,120 +165,113 @@ class neuralNet(object):
                 currLayer = self.layers[layerName]
                 
                 if layerName == 'outputLayer':
-                    # dLossdZ (dLdZ) = stored during forward pass
+                    # dLossdZ [stored during forward pass]
                     dLossdZ = layerLocalError
 
-                    # dLossdOutputWeights (dLdW)
-                    # dLdZ = stored during forward pass
-                    # dZdW
+                    # dLossdOutputWeights [dLdW] = dZdW [previous layer hidden state output] @ dLdZ [stored during forward pass]
                     prevLayerHiddenState = currLayer.prevLayerOutputMemory[timeStep]
-                    # dLdW = dLdZ * dZdW
                     dLossdOutputWeights = np.outer(prevLayerHiddenState, dLossdZ)
                     
-                    # dLossdOutputBias (dLdB)
-                    # dLdZ = stored during forward pass
-                    # dZdB = 1
-                    # dLdB = dLdZ * dZdB
+                    # dLossdOutputBias [dLdB] = dLdZ [stored during forward pass] @ dZdB [1]
                     dLossdOutputBias = layerLocalError
 
-                    # dLossdPreviousHiddenLayer (dLdH)
-                    # dLdZ = stored during forward pass
-                    # dZdH = layerWeights
-                    # dLdH = dLdZ * dZdH
+                    # dLossdPreviousHiddenLayer [dLdH] = dZdH [layerWeights] @ dLdZ [stored during forward pass]
                     dLossdPrevLayerHiddenState = np.dot(currLayer.layerWeights, layerLocalError)
                     
                     # updating localError to pass back
                     layerLocalError = dLossdPrevLayerHiddenState
 
                     # adding gradients to list for weight updates
-                    currLayer.layerWeightUpdates.append(dLossdOutputWeights)
-                    currLayer.biasUpdates.append(dLossdOutputBias)
+                    # print(f"Layer Weights shape: {currLayer.layerWeights.shape}")
+                    # print(f"Layer Weights update shape: {dLossdOutputWeights.shape}")
+                    currLayer.layerWeightUpdates += dLossdOutputWeights
+                    currLayer.biasUpdates += dLossdOutputBias
                 
                 else:
-                    # dLossdZ (dLdZ)
-                    # dLdH = passed back from previous layer
+                    # dLossdZ [dLdZ] = localError(dLdH [passed back from previous layer / time step], dHdZ [this layer hidden state most recent output])
                     dLdH = layerLocalError+currLayer.thisLayerTimeLocalError
-                    # hiddenState = most recent version of this hidden state
                     hiddenState = currLayer.thisLayerOutputMemory[timeStep]
-                    # dLdZ
                     dLossdZ = caa.localError(currLayer.activation, hiddenState, dLdH)
                     
-                    # dLossdTimeWeights (dLdWt)
-                    # dLdZ = calculated above
-                    # dZdWt
+                    # dLossdTimeWeights [dLdWt] = dLdZ [calculated above] @ dZdWt [prevTimeStepHiddenState]
                     prevTimeStepHiddenState = currLayer.prevTimeStepOutputMemory[timeStep]
-                    # dLdWt = dLdZ * dZdWt
                     dLossdTimeWeights = np.outer(prevTimeStepHiddenState, dLossdZ)
                     
-                    # dLossdLayerWeights (dLdWl)
-                    # dLdZ = calculated above
-                    # dZdWl
+                    # dLossdLayerWeights [dLdWl] = dZdWl [prevLayerHiddenState] @ dLdZ [calculated above]
                     prevLayerHiddenState = currLayer.prevLayerOutputMemory[timeStep]
-                    # dLdWl = dLdZ * dZdWl
                     dLossdLayerWeights = np.outer(prevLayerHiddenState, dLossdZ)
                     
-                    # dLossdOutputBias (dLdB)
-                    # dLdZ = calculated above
-                    # dZdb = 1
-                    # dLdWl = dLdZ * dZdb
+                    # dLossdOutputBias [dLdB] = dLdZ [calculated above] @ dZdB = [1]
                     dLossdOutputBias = dLossdZ
 
-                    # dLossdPreviousHiddenLayer (dLdH)
-                    # dLdZ = calculated above
-                    # dZdH = layerWeights
-                    # dLdH = dLdZ * dZdH
+                    # dLossdPreviousHiddenLayer [dLdH] = dZdH [layerWeights] @ dLdZ [calculated above]
                     layerLocalError = np.dot(currLayer.layerWeights, dLossdZ)
                     
-                    # dLossdPreviousTimeStep (dLdH)
-                    # dLdZ = calculated above
-                    # dZdH = timeWeights
-                    # dLdH = dLdZ * dZdH
+                    # dLossdPreviousTimeStep [dLdH] = dZdH [timeWeights] @ dLdZ [calculated above]
                     currLayer.thisLayerTimeLocalError = np.dot(currLayer.timeWeights, dLossdZ)
 
                     # adding gradients to list for weight updates
-                    currLayer.layerWeightUpdates.append(dLossdLayerWeights)
-                    currLayer.timeWeightUpdates.append(dLossdTimeWeights)
-                    currLayer.biasUpdates.append(dLossdOutputBias)
+                    currLayer.layerWeightUpdates += dLossdLayerWeights
+                    currLayer.timeWeightUpdates += dLossdTimeWeights
+                    currLayer.biasUpdates += dLossdOutputBias
         
         # updating weights and biases
         for count, layerName in enumerate(reverseKeys):
             currLayer = self.layers[layerName]
 
             # layer weight calculation
-            layerWeightUpdate = np.stack(currLayer.layerWeightUpdates).sum(axis=0)
-            # print(currLayer.layerWeightUpdates[1])
+            layerWeightUpdate = currLayer.layerWeightUpdates / (numSteps-1)
 
             # time weight calculation
-            if len(currLayer.timeWeightUpdates) > 0:
-                timeWeightUpdate = np.stack(currLayer.timeWeightUpdates).sum(axis=0)
+            if layerName != 'outputLayer':
+                timeWeightUpdate = currLayer.timeWeightUpdates / (numSteps-1)
 
-            
             # bias calculation
-            biasUpdate = np.stack(currLayer.biasUpdates).sum(axis=0)
+            biasUpdate = currLayer.biasUpdates / (numSteps-1)
             
+            # clipping
+            layerWeightUpdate = np.clip(layerWeightUpdate, -self.clipVal, self.clipVal)
+            if layerName != 'outputLayer':
+                timeWeightUpdate = np.clip(timeWeightUpdate, -self.clipVal, self.clipVal)
+            biasUpdate = np.clip(biasUpdate, -self.clipVal, self.clipVal)
+
             # updates
             currLayer.layerWeights += -self.learningRate*layerWeightUpdate
-            if len(currLayer.timeWeightUpdates) > 0:
+            if layerName != 'outputLayer':
                 currLayer.timeWeights += -self.learningRate*timeWeightUpdate
             currLayer.bias += -self.learningRate*biasUpdate
     
     # training model by repeatedly running forward and backward passes
     def trainModel(self, corpus):
-        numSamples = input.shape[0]
-        for epoch in range(self.epochs):
-            self.forwardPass(inputShuffled[start:end], outputShuffled[start:end])
-            self.backwardPass(inputShuffled[start:end], outputShuffled[start:end])
+        for count, text in enumerate(corpus):
+            wordCount = len(text)
+            print(f'Text #{count+1} - {wordCount} words')
+            
+            # forward pass
+            self.forwardPass(text)
+            modelLoss = self.loss[-1]
+            print(f'Loss: {modelLoss}')
+            print('********************************************')
+            print()
+
+            # backward pass
+            self.backwardPass(text)
+
+        # numSamples = input.shape[0]
+        # for epoch in range(self.epochs):
+            # self.forwardPass(inputShuffled[start:end], outputShuffled[start:end])
+            # self.backwardPass(inputShuffled[start:end], outputShuffled[start:end])
 
     # return predicted output for a given input
-    def query(self, input):
-        for count, layerName in enumerate(self.layers.keys()):
-            layer = self.layers[layerName]
-            if layer.activation == 'relu':
-                input = caa.relu(np.dot(input, layer.layerW) + layer.b)
-            elif layer.activation == 'sigmoid':
-                input = caa.sigmoid(np.dot(input, layer.layerW) + layer.b)
-            elif layer.activation == 'tanH':
-                input = caa.tanH(np.dot(input, layer.layerW) + layer.b)
-            elif layer.activation == 'softmax':
-                input = caa.softmax(np.dot(input, layer.layerW) + layer.b)
-        return input
+    # def query(self, input):
+    #     for count, layerName in enumerate(self.layers.keys()):
+    #         layer = self.layers[layerName]
+    #         if layer.activation == 'relu':
+    #             input = caa.relu(np.dot(input, layer.layerW) + layer.b)
+    #         elif layer.activation == 'sigmoid':
+    #             input = caa.sigmoid(np.dot(input, layer.layerW) + layer.b)
+    #         elif layer.activation == 'tanH':
+    #             input = caa.tanH(np.dot(input, layer.layerW) + layer.b)
+    #         elif layer.activation == 'softmax':
+    #             input = caa.softmax(np.dot(input, layer.layerW) + layer.b)
+    #     return input
