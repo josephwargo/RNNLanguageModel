@@ -31,31 +31,55 @@ class neuronLayer(object):
         if adam:
             # constants
             self.beta1 = .9
-            self.beta1T = self.beta1
             self.beta2 = .999
-            self.beta2T = self.beta2
             self.epsilon = 10e-8
             self.t = 1
             # arrays to store 
-            self.mdW = np.zeros(shape=(self.prevLayerShape,self.outputShape))
-            self.mdB = np.zeros(shape=(outputShape))
-            self.vdW = np.zeros(shape=(self.prevLayerShape,self.outputShape))
-            self.vdB = np.zeros(shape=(outputShape))
+            self.mdLayerWeights = np.zeros(shape=(self.prevLayerShape,self.outputShape))
+            self.vdLayerWeights = np.zeros(shape=(self.prevLayerShape,self.outputShape))
+
+            self.mdTimeWeights = np.zeros(shape=(self.outputShape,self.outputShape))
+            self.vdTimeWeights = np.zeros(shape=(self.outputShape,self.outputShape))
+
+            self.mdBias = np.zeros(shape=(outputShape))            
+            self.vdBias = np.zeros(shape=(outputShape))
     
-    def updateAdam(self, dCdW, dCdB):
-        # momentum
-        self.mdW = self.beta1*self.mdW + (1-self.beta1)*dCdW
-        self.mdB = self.beta1*self.mdB + (1-self.beta1)*dCdB
+    def updateAdam(self, dLdLayerWeights, dLdTimeWeights, dLdBias):
+        
+        # doing ^2 on beta1 and beta2 once per step
+        b1T = self.beta1
+        b2T = self.beta2
+
+        b1T = b1T**self.t
+        b2T = b2T**self.t
+
+        # layer weights
+        self.mdLayerWeights = self.beta1*self.mdLayerWeights + (1-self.beta1)*dLdLayerWeights # momentum
+        self.vdLayerWeights = self.beta2*self.vdLayerWeights + (1-self.beta2)*(dLdLayerWeights**2) #RMSProp
+        mdLayerWeightsHat = self.mdLayerWeights / (1-self.beta1**self.t) # correction
+        vdLayerWeightsHat = self.vdLayerWeights / (1-self.beta2**self.t) # correction
+
+        self.mdTimeWeights = self.beta1*self.mdTimeWeights + (1-self.beta1)*dLdTimeWeights
+        self.mdBias = self.beta1*self.mdBias + (1-self.beta1)*dLdBias
+        
         # RMSprop
-        self.vdW = self.beta2*self.vdW + (1-self.beta2)*(dCdW**2)
-        self.vdB = self.beta2*self.vdB + (1-self.beta2)*(dCdB**2)
-        # bias correction
-        mdWHat = self.mdW / (1-self.beta1**self.t)
-        mdBHat = self.mdB / (1-self.beta1**self.t)
-        vdWHat = self.vdW / (1-self.beta2**self.t)
-        vdBHat = self.vdB / (1-self.beta2**self.t)
+        self.vdTimeWeights = self.beta2*self.vdTimeWeights + (1-self.beta2)*(dLdTimeWeights**2)
+        self.vdBias = self.beta2*self.vdBias + (1-self.beta2)*(dLdBias**2)
+        
+        # correction
+        
+
+        mdTimeWeightsHat = self.mdTimeWeights / (1-self.beta1**self.t)
+        vdTimeWeightsHat = self.vdTimeWeights / (1-self.beta2**self.t)
+        
+        mdBiasHat = self.mdBias / (1-self.beta1**self.t)
+        vdBiasHat = self.vdBias / (1-self.beta2**self.t)
+        
         # adam
-        newdCdW = mdWHat / (np.sqrt(vdWHat)+self.epsilon)
-        newdCdB = mdBHat / (np.sqrt(vdBHat)+self.epsilon)
-        self.t+=1
-        return newdCdW, newdCdB
+        newdLdLayerWeights = mdLayerWeightsHat / (np.sqrt(vdLayerWeightsHat)+self.epsilon)
+        newdLdTimeWeights = mdTimeWeightsHat / (np.sqrt(vdTimeWeightsHat)+self.epsilon)
+        newdLdBias = mdBiasHat / (np.sqrt(vdBiasHat)+self.epsilon)
+        
+        self.t+=1 # increment
+
+        return newdLdLayerWeights, newdLdTimeWeights, newdLdBias
