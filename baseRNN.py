@@ -177,8 +177,8 @@ class neuralNet(object):
                     layerLocalError = dLossdPrevLayerHiddenState
 
                     # adam
-                    if currLayer.adam:
-                        dLossdOutputWeights, _, dLossdOutputBias = currLayer.updateAdam(dLossdOutputWeights, 0, dLossdOutputBias)
+                    # if currLayer.adam:
+                    #     dLossdOutputWeights, _, dLossdOutputBias = currLayer.updateAdam(dLossdOutputWeights, 0, dLossdOutputBias)
 
                     # adding gradients to list for weight updates
                     currLayer.layerWeightUpdates += dLossdOutputWeights
@@ -208,8 +208,8 @@ class neuralNet(object):
                     currLayer.thisLayerTimeLocalError = np.dot(currLayer.timeWeights, dLossdZ)
 
                     # adam
-                    if currLayer.adam:
-                        dLossdLayerWeights, dLossdTimeWeights, dLossdOutputBias = currLayer.updateAdam(dLossdLayerWeights, dLossdTimeWeights, dLossdOutputBias)
+                    # if currLayer.adam:
+                    #     dLossdLayerWeights, dLossdTimeWeights, dLossdOutputBias = currLayer.updateAdam(dLossdLayerWeights, dLossdTimeWeights, dLossdOutputBias)
                     
                     # adding gradients to list for weight updates
                     currLayer.layerWeightUpdates += dLossdLayerWeights
@@ -220,27 +220,28 @@ class neuralNet(object):
         for count, layerName in enumerate(reverseKeys):
             currLayer = self.layers[layerName]
 
-            # layer weight calculation
-            layerWeightUpdate = currLayer.layerWeightUpdates / (numSteps-1)
-
-            # time weight calculation
+            # normalize
+            currLayer.layerWeightUpdates /= (numSteps-1)
             if layerName != 'outputLayer':
-                timeWeightUpdate = currLayer.timeWeightUpdates / (numSteps-1)
-
-            # bias calculation
-            biasUpdate = currLayer.biasUpdates / (numSteps-1)
+                currLayer.timeWeightUpdates /= (numSteps-1)
+            currLayer.biasUpdates /= (numSteps-1)
             
             # clipping
-            layerWeightUpdate = np.clip(layerWeightUpdate, -self.clipVal, self.clipVal)
+            currLayer.layerWeightUpdates = np.clip(currLayer.layerWeightUpdates, -self.clipVal, self.clipVal)
             if layerName != 'outputLayer':
-                timeWeightUpdate = np.clip(timeWeightUpdate, -self.clipVal, self.clipVal)
-            biasUpdate = np.clip(biasUpdate, -self.clipVal, self.clipVal)
+                currLayer.timeWeightUpdates = np.clip(currLayer.timeWeightUpdates, -self.clipVal, self.clipVal)
+            currLayer.biasUpdates = np.clip(currLayer.biasUpdates, -self.clipVal, self.clipVal)
+
+            # adam
+            if currLayer.adam:
+                currLayer.layerWeightUpdates, currLayer.timeWeightUpdates, currLayer.biasUpdates = currLayer.updateAdam(
+                    currLayer.layerWeightUpdates, currLayer.timeWeightUpdates, currLayer.biasUpdates)
 
             # updates
-            currLayer.layerWeights += -self.learningRate*layerWeightUpdate
+            currLayer.layerWeights += -self.learningRate*currLayer.layerWeightUpdates
             if layerName != 'outputLayer':
-                currLayer.timeWeights += -self.learningRate*timeWeightUpdate
-            currLayer.bias += -self.learningRate*biasUpdate
+                currLayer.timeWeights += -self.learningRate*currLayer.timeWeightUpdates
+            currLayer.bias += -self.learningRate*currLayer.biasUpdates
     
     # training model by repeatedly running forward and backward passes
     def trainModel(self, corpus):
