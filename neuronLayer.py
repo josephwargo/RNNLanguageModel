@@ -1,6 +1,6 @@
 import numpy as np
 class neuronLayer(object):
-    def __init__(self, prevLayerShape, outputShape, activation, rnn=False, adam=False):
+    def __init__(self, prevLayerShape, outputShape, activation, batchSize, rnn=False, adam=False):
 
         # layer info
         self.prevLayerShape = prevLayerShape
@@ -14,14 +14,17 @@ class neuronLayer(object):
         # activation
         self.activation = activation
 
+        # hyperparameters
+        self.batchSize = batchSize
+
         # storing hidden layer inputs and output during forward pass for BPTT
         self.prevLayerOutputMemory = []
         self.prevTimeStepOutputMemory = []
         self.thisLayerOutputMemory = []
-        self.thisLayerMostRecentOutput = np.zeros(shape=(outputShape))
+        self.thisLayerMostRecentOutput = np.zeros(shape=(self.batchSize, outputShape))
 
         # storing gradients during backward pass for BPTT
-        self.thisLayerTimeLocalError = np.zeros(shape=(outputShape))
+        self.thisLayerTimeLocalError = np.zeros(shape=(self.batchSize, outputShape))
         self.timeWeightUpdates = 0
         self.layerWeightUpdates = 0
         self.biasUpdates = 0
@@ -49,12 +52,12 @@ class neuronLayer(object):
         # doing ^t on beta1 and beta2 once per step
         b1T = self.beta1**self.t
         b2T = self.beta2**self.t
-
         # layer weights
         self.mdLayerWeights = self.beta1*self.mdLayerWeights + (1-self.beta1)*dLdLayerWeights # momentum stored
         mdLayerWeightsHat = self.mdLayerWeights / (1-b1T) # momentum correction
         self.vdLayerWeights = self.beta2*self.vdLayerWeights + (1-self.beta2)*(dLdLayerWeights**2) # RMSProp stored
         vdLayerWeightsHat = self.vdLayerWeights / (1-b2T) # RMSProp correction
+        
         newdLdLayerWeights = mdLayerWeightsHat / (np.sqrt(vdLayerWeightsHat)+self.epsilon) # Adam
 
         # time weights

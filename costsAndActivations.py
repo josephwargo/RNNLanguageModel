@@ -17,7 +17,7 @@ def crossEntropyLoss(yIndex, yPred):
     logSumExp = maxLogits + np.log(normalizedProbs)
 
     # geting the log probability
-    logProb = logSumExp - yPred[yIndex]
+    logProb = logSumExp - yPred[:, yIndex]
 
     return logProb
 
@@ -55,7 +55,7 @@ def softmax(x):
 # special gradient for softmax & cross entropy loss
 def softmaxLocalError(wordIndex, logits):
     prob = softmax(logits)
-    prob[wordIndex] -= 1.0
+    prob[:, wordIndex] -= 1.0
     return prob
 
 # choosing activation

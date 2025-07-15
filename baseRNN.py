@@ -5,7 +5,7 @@ import costsAndActivations as caa
 # entire net
 class neuralNet(object):
     def __init__(self, embeddings, word2ind, outputActivation, hiddenLayerShapes, 
-                 hiddenLayerActivations, lossFunction='crossEntropyLoss', learningRate=.001, epochs=1,
+                 hiddenLayerActivations, lossFunction='crossEntropyLoss', learningRate=.001, epochs=1, batchSize=8,
                  adam=False, clipVal=1, debug=False):
         # errors
         if len(hiddenLayerShapes)!=len(hiddenLayerActivations):
@@ -19,11 +19,13 @@ class neuralNet(object):
         self.embeddings = embeddings
         # self.corpus = corpus
         self.word2ind = word2ind
+        self.word2indMapper = np.vectorize(word2ind.get)
         self.embeddingsShape = embeddings.shape[1]
         self.numEmbeddings = embeddings.shape[0]
         
         # hyperparameters
         self.epochs = epochs
+        self.batchSize = batchSize
         self.debug = debug
         self.adam = adam
         self.learningRate = learningRate
@@ -38,20 +40,26 @@ class neuralNet(object):
         
         # initializing hidden layers and adding to dictionary of all layers
         hiddenLayer1 = neuronLayer(self.embeddingsShape, hiddenLayerShapes[0],
-                                   hiddenLayerActivations[0], rnn=True, adam=adam)
+                                   hiddenLayerActivations[0], batchSize=self.batchSize, rnn=True, adam=adam)
         self.layers = {'hiddenLayer1': hiddenLayer1}
         if len(hiddenLayerShapes) > 1:
             for count, inputShape in enumerate(hiddenLayerShapes):
                 layerNum = count+2
                 if count<len(hiddenLayerShapes)-1:
                     self.layers["hiddenLayer{}".format(layerNum)] = neuronLayer(
-                        inputShape, hiddenLayerShapes[count+1], hiddenLayerActivations[count+1], rnn=True, adam=adam)
+                        inputShape, hiddenLayerShapes[count+1], hiddenLayerActivations[count+1], batchSize=self.batchSize, rnn=True, adam=adam)
        
         # adding output layer to dictionary of all layers
         outputLayer = neuronLayer(
-            prevLayerShape=hiddenLayerShapes[-1], outputShape=self.numEmbeddings, activation=outputActivation, rnn=True, adam=adam)
+            prevLayerShape=hiddenLayerShapes[-1], outputShape=self.numEmbeddings, activation=outputActivation, batchSize=self.batchSize, rnn=True, adam=adam)
         self.layers['outputLayer'] = outputLayer
 
+    def inputToInd(self, text):
+        longestSequence = max(len(sequence) for sequence in text)
+        padVal = '<PAD>'
+        paddedText = [sequence + [padVal] * (longestSequence - len(sequence)) for sequence in text]
+        paddedText = self.word2indMapper(paddedText)
+        return paddedText
 
     def forwardPassPerWord(self, prevLayerOutput, train):
         # cycling through each layer
@@ -63,7 +71,8 @@ class neuralNet(object):
                     # adding previous layer hidden state to memory (for BPTT)
                     currLayer.prevLayerOutputMemory.append(prevLayerOutput)
 
-                z = np.dot(prevLayerOutput, currLayer.layerWeights) + currLayer.bias
+                z = prevLayerOutput @ currLayer.layerWeights + currLayer.bias
+                # z = np.dot(prevLayerOutput, currLayer.layerWeights) + currLayer.bias
                 logits = z
                 
                 # updating hidden state
@@ -77,8 +86,11 @@ class neuralNet(object):
                     currLayer.prevTimeStepOutputMemory.append(currLayer.thisLayerMostRecentOutput)
                 
                 # calculating hidden state (dot products and activation)
-                layerDotProduct = np.dot(prevLayerOutput, currLayer.layerWeights)
-                timeDotProduct = np.dot(currLayer.thisLayerMostRecentOutput, currLayer.timeWeights)
+                # layerDotProduct = np.dot(prevLayerOutput, currLayer.layerWeights)
+                layerDotProduct = prevLayerOutput @ currLayer.layerWeights
+
+                timeDotProduct = currLayer.thisLayerMostRecentOutput @ currLayer.timeWeights
+                # print(timeDotProduct.shape)
                 z = layerDotProduct + timeDotProduct + currLayer.bias # z = Uh + Wx + b
                 hiddenState = caa.activation(currLayer.activation, z) # activation - depending on the layer
 
@@ -94,15 +106,16 @@ class neuralNet(object):
     # training methods
     def forwardPass(self, text, train=True):
         # cycling through each word (timestep)
+        text = self.inputToInd(text)
         for wordIndex in range(len(text)-1):
             # selecting proper input embeddings
-            inputWord = text[wordIndex]
-            inputVocabIndex = self.word2ind[inputWord]
-            prevLayerOutput = self.embeddings[inputVocabIndex]
+            inputWords = text[:,wordIndex]
+
+            prevLayerOutput = self.embeddings[inputWords]
 
             # selecting index for output word
-            outputWord = text[wordIndex+1]
-            outputVocabIndex = self.word2ind[outputWord]
+            outputVocabIndex = text[wordIndex+1]
+            # outputVocabIndex = self.word2ind[outputWord]
             
             # iterating through each layer per word
             logits = self.forwardPassPerWord(prevLayerOutput, train)
@@ -134,20 +147,17 @@ class neuralNet(object):
 
                 # dLossdOutputWeights [dLdW] = dZdW [previous layer hidden state output] @ dLdZ [stored during forward pass]
                 prevLayerHiddenState = currLayer.prevLayerOutputMemory[timeStep]
-                dLossdOutputWeights = np.outer(prevLayerHiddenState, dLossdZ)
+                dLossdOutputWeights = prevLayerHiddenState.T @ dLossdZ
+                # dLossdOutputWeights = dLossdOutputWeights.T
                 
                 # dLossdOutputBias [dLdB] = dLdZ [stored during forward pass] @ dZdB [1]
                 dLossdOutputBias = layerLocalError
 
                 # dLossdPreviousHiddenLayer [dLdH] = dZdH [layerWeights] @ dLdZ [stored during forward pass]
-                dLossdPrevLayerHiddenState = np.dot(currLayer.layerWeights, layerLocalError)
+                dLossdPrevLayerHiddenState = currLayer.layerWeights @ dLossdZ.T
                 
                 # updating localError to pass back
-                layerLocalError = dLossdPrevLayerHiddenState
-
-                # adam
-                # if currLayer.adam:
-                #     dLossdOutputWeights, _, dLossdOutputBias = currLayer.updateAdam(dLossdOutputWeights, 0, dLossdOutputBias)
+                layerLocalError = dLossdPrevLayerHiddenState.T
 
                 # adding gradients to list for weight updates
                 currLayer.layerWeightUpdates += dLossdOutputWeights
@@ -156,25 +166,30 @@ class neuralNet(object):
             else:
                 # dLossdZ [dLdZ] = localError(dLdH [passed back from previous layer / time step], dHdZ [this layer hidden state most recent output])
                 dLdH = layerLocalError+currLayer.thisLayerTimeLocalError
+                
                 hiddenState = currLayer.thisLayerOutputMemory[timeStep]
+                
                 dLossdZ = caa.localError(currLayer.activation, hiddenState, dLdH)
                 
                 # dLossdTimeWeights [dLdWt] = dLdZ [calculated above] @ dZdWt [prevTimeStepHiddenState]
                 prevTimeStepHiddenState = currLayer.prevTimeStepOutputMemory[timeStep]
-                dLossdTimeWeights = np.outer(prevTimeStepHiddenState, dLossdZ)
+                dLossdTimeWeights = prevTimeStepHiddenState.T @ dLossdZ
+                # dLossdTimeWeights = dLossdTimeWeights.T
                 
                 # dLossdLayerWeights [dLdWl] = dZdWl [prevLayerHiddenState] @ dLdZ [calculated above]
                 prevLayerHiddenState = currLayer.prevLayerOutputMemory[timeStep]
-                dLossdLayerWeights = np.outer(prevLayerHiddenState, dLossdZ)
+                dLossdLayerWeights = prevLayerHiddenState.T @ dLossdZ
+                # dLossdLayerWeights = dLossdLayerWeights.T
                 
                 # dLossdOutputBias [dLdB] = dLdZ [calculated above] @ dZdB = [1]
                 dLossdOutputBias = dLossdZ
 
                 # dLossdPreviousHiddenLayer [dLdH] = dZdH [layerWeights] @ dLdZ [calculated above]
-                layerLocalError = np.dot(currLayer.layerWeights, dLossdZ)
+                layerLocalError = currLayer.layerWeights @ dLossdZ.T
+                layerLocalError = layerLocalError.T
                 
                 # dLossdPreviousTimeStep [dLdH] = dZdH [timeWeights] @ dLdZ [calculated above]
-                currLayer.thisLayerTimeLocalError = np.dot(currLayer.timeWeights, dLossdZ)
+                currLayer.thisLayerTimeLocalError = (currLayer.timeWeights @ dLossdZ.T).T
                 
                 # adding gradients to list for weight updates
                 currLayer.layerWeightUpdates += dLossdLayerWeights
@@ -274,7 +289,21 @@ class neuralNet(object):
 
             # backward pass
             self.backwardPass(text)
+    
+    def trainBatch(self, batch):
+        # resetting gradients
+        self.resetGrads()
 
+        # forward pass
+        _ = self.forwardPass(batch)
+        modelLoss = self.loss[-1]
+        print(f'Loss: {modelLoss}')
+        print('********************************************')
+        print()
+
+        # backward pass
+        self.backwardPass(batch)
+    
     # return predicted output for a given input
     def querySequence(self, sequence):
 
