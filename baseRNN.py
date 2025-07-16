@@ -151,7 +151,7 @@ class neuralNet(object):
                 # dLossdOutputWeights = dLossdOutputWeights.T
                 
                 # dLossdOutputBias [dLdB] = dLdZ [stored during forward pass] @ dZdB [1]
-                dLossdOutputBias = layerLocalError
+                dLossdOutputBias = np.sum(layerLocalError, axis=0)
 
                 # dLossdPreviousHiddenLayer [dLdH] = dZdH [layerWeights] @ dLdZ [stored during forward pass]
                 dLossdPrevLayerHiddenState = currLayer.layerWeights @ dLossdZ.T
@@ -182,7 +182,7 @@ class neuralNet(object):
                 # dLossdLayerWeights = dLossdLayerWeights.T
                 
                 # dLossdOutputBias [dLdB] = dLdZ [calculated above] @ dZdB = [1]
-                dLossdOutputBias = dLossdZ
+                dLossdOutputBias = np.sum(dLossdZ, axis=0)
 
                 # dLossdPreviousHiddenLayer [dLdH] = dZdH [layerWeights] @ dLdZ [calculated above]
                 layerLocalError = currLayer.layerWeights @ dLossdZ.T
@@ -221,7 +221,6 @@ class neuralNet(object):
         # updating weights and biases
         for layerName in reverseKeys:
             currLayer = self.layers[layerName]
-
             # normalize
             currLayer.layerWeightUpdates /= (numSteps-1)
             if layerName != 'outputLayer':
@@ -273,22 +272,14 @@ class neuralNet(object):
 
     # training model by repeatedly running forward and backward passes
     def trainModel(self, corpus):
-        for count, text in enumerate(corpus):
-            wordCount = len(text)
-            print(f'Text #{count+1} - {wordCount} words')
+        # for count, batch in enumerate(corpus):
+        for count, startIndex in enumerate(range(0, len(corpus), self.batchSize)):
+            stopIndex = startIndex + self.batchSize
+            batch = corpus[startIndex:stopIndex]
+            maxWordCount = max(len(text) for text in batch)
+            print(f'Batch #{count+1} - max {maxWordCount} words')
             
-            # resetting gradients
-            self.resetGrads()
-
-            # forward pass
-            _ = self.forwardPass(text)
-            modelLoss = self.loss[-1]
-            print(f'Loss: {modelLoss}')
-            print('********************************************')
-            print()
-
-            # backward pass
-            self.backwardPass(text)
+            self.trainBatch(batch)
     
     def trainBatch(self, batch):
         # resetting gradients
