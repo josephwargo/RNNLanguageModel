@@ -54,12 +54,13 @@ class neuralNet(object):
             prevLayerShape=hiddenLayerShapes[-1], outputShape=self.numEmbeddings, activation=outputActivation, batchSize=self.batchSize, rnn=True, adam=adam)
         self.layers['outputLayer'] = outputLayer
 
-    def inputToInd(self, text):
-        longestSequence = max(len(sequence) for sequence in text)
-        padVal = '<PAD>'
-        paddedText = [sequence + [padVal] * (longestSequence - len(sequence)) for sequence in text]
-        paddedText = self.word2indMapper(paddedText)
-        return paddedText
+    def inputToInd(self, text, train=True):
+        if train:
+            longestSequence = max(len(sequence) for sequence in text)
+            padVal = '<PAD>'
+            text = [sequence + [padVal] * (longestSequence - len(sequence)) for sequence in text]
+        text = self.word2indMapper(text)
+        return text
 
     def forwardPassPerWord(self, prevLayerOutput, train):
         # cycling through each layer
@@ -106,10 +107,13 @@ class neuralNet(object):
     # training methods
     def forwardPass(self, text, train=True):
         # cycling through each word (timestep)
-        text = self.inputToInd(text)
+        text = self.inputToInd(text, train)
         for wordIndex in range(len(text)-1):
             # selecting proper input embeddings
-            inputWords = text[:,wordIndex]
+            if train:
+                inputWords = text[:,wordIndex]
+            else:
+                inputWords = text[wordIndex]
 
             prevLayerOutput = self.embeddings[inputWords]
 
