@@ -28,9 +28,9 @@ class neuralNet(object):
         self.batchSize = batchSize
         self.debug = debug
         self.adam = adam
-        self.learningRate = learningRate
+        self.learningRate = np.float32(learningRate)
         self.lossFunction = lossFunction
-        self.clipVal = clipVal
+        self.clipVal = np.float32(clipVal)
         self.activations = hiddenLayerActivations + [outputActivation]
 
         # loss
@@ -40,18 +40,24 @@ class neuralNet(object):
         
         # initializing hidden layers and adding to dictionary of all layers
         hiddenLayer1 = neuronLayer(self.embeddingsShape, hiddenLayerShapes[0],
-                                   hiddenLayerActivations[0], batchSize=self.batchSize, rnn=True, adam=adam)
+                                    hiddenLayerActivations[0], batchSize=self.batchSize,
+                                    clipVal=self.clipVal, learningRate=self.learningRate,
+                                    rnn=True, adam=adam)
         self.layers = {'hiddenLayer1': hiddenLayer1}
         if len(hiddenLayerShapes) > 1:
             for count, inputShape in enumerate(hiddenLayerShapes):
                 layerNum = count+2
                 if count<len(hiddenLayerShapes)-1:
                     self.layers["hiddenLayer{}".format(layerNum)] = neuronLayer(
-                        inputShape, hiddenLayerShapes[count+1], hiddenLayerActivations[count+1], batchSize=self.batchSize, rnn=True, adam=adam)
+                        inputShape, hiddenLayerShapes[count+1], hiddenLayerActivations[count+1],
+                        batchSize=self.batchSize, clipVal=self.clipVal, learningRate=self.learningRate,
+                        rnn=True, adam=adam)
        
         # adding output layer to dictionary of all layers
         outputLayer = neuronLayer(
-            prevLayerShape=hiddenLayerShapes[-1], outputShape=self.numEmbeddings, activation=outputActivation, batchSize=self.batchSize, rnn=True, adam=adam)
+            prevLayerShape=hiddenLayerShapes[-1], outputShape=self.numEmbeddings, activation=outputActivation,
+            batchSize=self.batchSize, clipVal=self.clipVal, learningRate=self.learningRate,
+            rnn=True, adam=adam)
         self.layers['outputLayer'] = outputLayer
 
     def inputToInd(self, text, train=True):
@@ -224,29 +230,9 @@ class neuralNet(object):
         
         # updating weights and biases
         for layerName in reverseKeys:
-            currLayer = self.layers[layerName]
-            # normalize
-            currLayer.layerWeightUpdates /= (numSteps-1)
-            if layerName != 'outputLayer':
-                currLayer.timeWeightUpdates /= (numSteps-1)
-            currLayer.biasUpdates /= (numSteps-1)
-            
-            # clipping
-            currLayer.layerWeightUpdates = np.clip(currLayer.layerWeightUpdates, -self.clipVal, self.clipVal)
-            if layerName != 'outputLayer':
-                currLayer.timeWeightUpdates = np.clip(currLayer.timeWeightUpdates, -self.clipVal, self.clipVal)
-            currLayer.biasUpdates = np.clip(currLayer.biasUpdates, -self.clipVal, self.clipVal)
+            currLayer = self.layers[layerName]            
+            currLayer.update(numSteps)
 
-            # adam
-            if currLayer.adam:
-                currLayer.layerWeightUpdates, currLayer.timeWeightUpdates, currLayer.biasUpdates = currLayer.updateAdam(
-                    currLayer.layerWeightUpdates, currLayer.timeWeightUpdates, currLayer.biasUpdates)
-
-            # updates
-            currLayer.layerWeights += -self.learningRate*currLayer.layerWeightUpdates
-            if layerName != 'outputLayer':
-                currLayer.timeWeights += -self.learningRate*currLayer.timeWeightUpdates
-            currLayer.bias += -self.learningRate*currLayer.biasUpdates
     
     def resetGrads(self):
     # Resetting losses and gradients in advance of forward pass
@@ -261,18 +247,20 @@ class neuralNet(object):
             currLayer = self.layers[layerName] # layer
 
             # for forward pass calculation
-            currLayer.thisLayerMostRecentOutput = np.zeros(currLayer.thisLayerMostRecentOutput.shape) # hidden state at time 0
+            currLayer.thisLayerMostRecentOutput = np.zeros(currLayer.thisLayerMostRecentOutput.shape).astype(np.float32) # hidden state at time 0
             
             # for backward pass calculation
             currLayer.prevLayerOutputMemory = [] # memory of hidden states from the previous layer in  this timestep
-            currLayer.prevTimeStepOutputMemory = [] # memory of hidden states from this layer in the previous timestep
+            if currLayer.rnn:
+                currLayer.prevTimeStepOutputMemory = [] # memory of hidden states from this layer in the previous timestep
             currLayer.thisLayerOutputMemory = [] # memory of the output from this layer
 
             # for gradient updates
             currLayer.thisLayerTimeLocalError = np.zeros(shape=(currLayer.thisLayerTimeLocalError.shape))
-            currLayer.timeWeightUpdates = 0
-            currLayer.layerWeightUpdates = 0
-            currLayer.biasUpdates = 0
+            if currLayer.rnn:
+                currLayer.timeWeightUpdates = np.zeros_like(currLayer.timeWeights)
+            currLayer.layerWeightUpdates = np.zeros_like(currLayer.layerWeights)
+            currLayer.biasUpdates = np.zeros_like(currLayer.bias)
 
     # training model by repeatedly running forward and backward passes
     def trainModel(self, corpus):

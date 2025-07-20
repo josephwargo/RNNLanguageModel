@@ -85,4 +85,3 @@ def localError(activationName, hiddenState, dLdH):
     # special case of softmax & cross entropy loss
     # TBD
     return localError
-
