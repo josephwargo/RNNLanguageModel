@@ -5,10 +5,11 @@ class neuronLayer(object):
         # layer info
         self.prevLayerShape = prevLayerShape
         self.outputShape = outputShape
-        xavier = np.sqrt(2/(self.prevLayerShape+self.outputShape))
-        self.layerWeights = np.random.normal(0,xavier, size=(self.prevLayerShape,self.outputShape)).astype(np.float32)
+        layerXavier = np.sqrt(2/(self.prevLayerShape+self.outputShape))
+        self.layerWeights = np.random.normal(0,layerXavier, size=(self.prevLayerShape,self.outputShape)).astype(np.float32)
         if rnn:
-            self.timeWeights = np.zeros(shape=(outputShape, outputShape)).astype(np.float32)
+            timeXavier = np.sqrt(2/(self.outputShape+self.outputShape))
+            self.timeWeights = np.random.normal(0,timeXavier, size=(outputShape, outputShape)).astype(np.float32)
         self.bias = np.zeros(shape=(outputShape)).astype(np.float32)
 
         # activation

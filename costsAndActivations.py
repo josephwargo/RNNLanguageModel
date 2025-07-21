@@ -2,24 +2,26 @@ import numpy as np
 
 # functions to compute costs and gradients of costs
 def MSE(y, y_pred):
-    return np.mean(.5*((y-y_pred)**2))
+    return .5*np.mean((y-y_pred)**2)
 def MSEgradient(y, y_pred):
-    return -(y-y_pred)
+    return (y_pred-y) / y.size
 
 # no gradient function because this will only be paired with softmax, and they have a joint gradient function
-def crossEntropyLoss(yIndex, yPred):
+def crossEntropyLoss(yIndex, logits):
     # determining maxes to normalize
-    maxLogits = np.max(yPred) #, axis=1, keepdims=True)
+    maxLogits = logits.max(axis=1, keepdims=True)
 
     # using log sum exp trick
-    normalizedExp = np.exp(yPred - maxLogits)
-    normalizedProbs = np.sum(normalizedExp) #, axis=1, keepdims=True)
-    logSumExp = maxLogits + np.log(normalizedProbs)
+    normalizedExp = np.exp(logits - maxLogits)
+    normalizedProbs = normalizedExp.sum(axis=1, keepdims=True)
+    logSumExp = maxLogits + np.log(normalizedProbs+1e-12)
 
     # geting the log probability
-    logProb = logSumExp - yPred[:, yIndex]
+    updatedLogits = logits[np.arange(logits.shape[0]), yIndex][:, None]
+    logProb = logSumExp - updatedLogits
 
-    return logProb
+    return logProb.mean()
+    # return logProb
 
 # functions to compute activation and gradient of activations
 def sigmoid(x):
@@ -41,22 +43,23 @@ def tanHGradient(y):
 
 # no gradient function because this will only be paired with Cross Entropy Loss,
 # and they have a joint gradient function
-def softmax(x):
-    if len(x.shape)>1:
-        normalization = np.max(x, axis=1, keepdims=True)
-        numerator = np.exp(x - normalization)
+def softmax(logits):
+    if len(logits.shape)>1:
+        normalization = np.max(logits, axis=1, keepdims=True)
+        numerator = np.exp(logits - normalization)
         denominator = np.sum(numerator, axis=1, keepdims=True)
     else:
-        normalization = np.max(x)
-        numerator = np.exp(x - normalization)
+        normalization = np.max(logits)
+        numerator = np.exp(logits - normalization)
         denominator = np.sum(numerator)
-    return numerator / (denominator+10e-8)
+    return numerator / (denominator+1e-8)
 
 # special gradient for softmax & cross entropy loss
 def softmaxLocalError(wordIndex, logits):
     prob = softmax(logits)
-    prob[:, wordIndex] -= 1.0
-    return prob
+    prob[np.arange(prob.shape[0]), wordIndex] -= 1.0
+    return prob / logits.shape[0]
+    # return prob
 
 # choosing activation
 def activation(activationName, z):

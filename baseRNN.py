@@ -60,12 +60,16 @@ class neuralNet(object):
             rnn=True, adam=adam)
         self.layers['outputLayer'] = outputLayer
 
+        self.currentText = None
+        self.padIndex = self.word2ind['<PAD>']
+
     def inputToInd(self, text, train=True):
         if train:
             longestSequence = max(len(sequence) for sequence in text)
             padVal = '<PAD>'
             text = [sequence + [padVal] * (longestSequence - len(sequence)) for sequence in text]
         text = self.word2indMapper(text)
+
         return text
 
     def forwardPassPerWord(self, prevLayerOutput, train):
@@ -79,9 +83,8 @@ class neuralNet(object):
                     currLayer.prevLayerOutputMemory.append(prevLayerOutput)
 
                 z = prevLayerOutput @ currLayer.layerWeights + currLayer.bias
-                # z = np.dot(prevLayerOutput, currLayer.layerWeights) + currLayer.bias
                 logits = z
-                
+                # print(logits.shape)
                 # updating hidden state
                 currLayer.thisLayerMostRecentOutput = prevLayerOutput
 
@@ -90,21 +93,22 @@ class neuralNet(object):
                 if train:
                     # adding previous layer and timestep hidden states to memory (for BPTT)
                     currLayer.prevLayerOutputMemory.append(prevLayerOutput)
-                    currLayer.prevTimeStepOutputMemory.append(currLayer.thisLayerMostRecentOutput)
+                    currLayer.prevTimeStepOutputMemory.append(currLayer.thisLayerMostRecentOutput.copy())
                 
                 # calculating hidden state (dot products and activation)
                 # layerDotProduct = np.dot(prevLayerOutput, currLayer.layerWeights)
                 layerDotProduct = prevLayerOutput @ currLayer.layerWeights
-
+                # print(layerDotProduct.shape)
                 timeDotProduct = currLayer.thisLayerMostRecentOutput @ currLayer.timeWeights
+                # print(timeDotProduct.shape)
                 # print(timeDotProduct.shape)
                 z = layerDotProduct + timeDotProduct + currLayer.bias # z = Uh + Wx + b
                 hiddenState = caa.activation(currLayer.activation, z) # activation - depending on the layer
-
+                # print(hiddenState.shape)
                 # updating hidden state and hidden state memory
                 currLayer.thisLayerMostRecentOutput = hiddenState
                 if train:
-                    currLayer.thisLayerOutputMemory.append(hiddenState)
+                    currLayer.thisLayerOutputMemory.append(hiddenState.copy())
 
                 # updating so that this outputs hidden state feeds into 
                 prevLayerOutput = hiddenState
@@ -113,18 +117,27 @@ class neuralNet(object):
     # training methods
     def forwardPass(self, text, train=True):
         # cycling through each word (timestep)
-        text = self.inputToInd(text, train)
-        for wordIndex in range(len(text)-1):
+        self.currentText = self.inputToInd(text, train)
+        if train:
+            numSteps = self.currentText.shape[1]
+        else:
+            numSteps = self.currentText.shape[0]
+        for wordIndex in range(numSteps-1):
             # selecting proper input embeddings
             if train:
-                inputWords = text[:,wordIndex]
+                inputWords = self.currentText[:,wordIndex]
             else:
-                inputWords = text[wordIndex]
+                inputWords = self.currentText[wordIndex]
 
             prevLayerOutput = self.embeddings[inputWords]
+            
 
             # selecting index for output word
-            outputVocabIndex = text[wordIndex+1]
+            if train:
+                outputVocabIndex = self.currentText[:, wordIndex+1]
+                padMask = outputVocabIndex!=self.padIndex
+            else:
+                outputVocabIndex = self.currentText[wordIndex+1]
             # outputVocabIndex = self.word2ind[outputWord]
             
             # iterating through each layer per word
@@ -133,16 +146,20 @@ class neuralNet(object):
             if train:
                 # storing local loss and loss gradients
                 if self.lossFunction == 'crossEntropyLoss':
-                    loss = caa.crossEntropyLoss(outputVocabIndex, logits)
+                    loss = caa.crossEntropyLoss(outputVocabIndex[padMask], logits[padMask])
                     self.localLoss.append(loss)
-                    self.lossGradients.append(caa.softmaxLocalError(outputVocabIndex, logits)) # dLdH
+                    # gradient
+                    gradient = caa.softmaxLocalError(outputVocabIndex[padMask], logits[padMask])
+                    fullGradient = np.zeros_like(logits)
+                    fullGradient[padMask] = gradient
+                    self.lossGradients.append(fullGradient) # dLdH
                 else:
                     raise Exception('Unknown loss function')
         if train:
             # calculating final loss (divided over all words in the text)
             meanLoss = np.mean(self.localLoss)
             self.loss.append(meanLoss)
-        
+ 
         return logits
 
     def backwardPassPerTimestep(self, layerLocalError, reverseKeys, timeStep):
@@ -207,8 +224,8 @@ class neuralNet(object):
                 currLayer.biasUpdates += dLossdOutputBias
 
     # backward pass through entire text
-    def backwardPass(self, text):
-        numSteps = len(text)
+    def backwardPass(self):
+        numSteps = self.currentText.shape[1]
         # reversing layers to iterate backwards through
         reverseKeys = list(self.layers.keys())
         reverseKeys.reverse()
@@ -231,10 +248,10 @@ class neuralNet(object):
         # updating weights and biases
         for layerName in reverseKeys:
             currLayer = self.layers[layerName]            
-            currLayer.update(numSteps)
+            currLayer.update(numSteps-1)
 
     
-    def resetGrads(self):
+    def resetGrads(self, train=True):
     # Resetting losses and gradients in advance of forward pass
         # setting/resetting loss
         self.localLoss = [] # list to store the local loss to average at the end
@@ -247,8 +264,11 @@ class neuralNet(object):
             currLayer = self.layers[layerName] # layer
 
             # for forward pass calculation
-            currLayer.thisLayerMostRecentOutput = np.zeros(currLayer.thisLayerMostRecentOutput.shape).astype(np.float32) # hidden state at time 0
-            
+            # currLayer.thisLayerMostRecentOutput = np.zeros(shape=currLayer.thisLayerMostRecentOutput.shape).astype(np.float32)
+            if train:
+                currLayer.thisLayerMostRecentOutput = np.zeros_like(currLayer.thisLayerMostRecentOutput).astype(np.float32) # hidden state at time 0
+            else:
+                currLayer.thisLayerMostRecentOutput = np.zeros(size=(currLayer.outputShape))
             # for backward pass calculation
             currLayer.prevLayerOutputMemory = [] # memory of hidden states from the previous layer in  this timestep
             if currLayer.rnn:
@@ -256,15 +276,17 @@ class neuralNet(object):
             currLayer.thisLayerOutputMemory = [] # memory of the output from this layer
 
             # for gradient updates
-            currLayer.thisLayerTimeLocalError = np.zeros(shape=(currLayer.thisLayerTimeLocalError.shape))
+            currLayer.thisLayerTimeLocalError = np.zeros(shape=(currLayer.thisLayerTimeLocalError.shape)).astype(np.float32)
             if currLayer.rnn:
-                currLayer.timeWeightUpdates = np.zeros_like(currLayer.timeWeights)
-            currLayer.layerWeightUpdates = np.zeros_like(currLayer.layerWeights)
-            currLayer.biasUpdates = np.zeros_like(currLayer.bias)
+                currLayer.timeWeightUpdates = np.zeros_like(currLayer.timeWeights).astype(np.float32)
+            currLayer.layerWeightUpdates = np.zeros_like(currLayer.layerWeights).astype(np.float32)
+            currLayer.biasUpdates = np.zeros_like(currLayer.bias).astype(np.float32)
 
     # training model by repeatedly running forward and backward passes
     def trainModel(self, corpus):
-        # for count, batch in enumerate(corpus):
+        remainder = len(corpus) % self.batchSize
+        if remainder != 0:
+            corpus = corpus[:-remainder]
         for count, startIndex in enumerate(range(0, len(corpus), self.batchSize)):
             stopIndex = startIndex + self.batchSize
             batch = corpus[startIndex:stopIndex]
@@ -285,11 +307,10 @@ class neuralNet(object):
         print()
 
         # backward pass
-        self.backwardPass(batch)
+        self.backwardPass()
     
     # return predicted output for a given input
     def querySequence(self, sequence):
-
         # getting logits
         logits = self.forwardPass(sequence, train=False)
         
@@ -301,7 +322,7 @@ class neuralNet(object):
     
 
     def generateOutput(self, sequence, numWords):
-        
+        self.resetGrads()
         for i in range(numWords):
             nextWord = self.querySequence(sequence)
             sequence.append(nextWord)
