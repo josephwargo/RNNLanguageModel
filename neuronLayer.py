@@ -57,7 +57,8 @@ class neuronLayer(object):
 
         # normalizing
         self.layerWeightUpdates /= numSteps
-        self.timeWeightUpdates /= numSteps
+        if self.rnn:
+            self.timeWeightUpdates /= numSteps
         self.biasUpdates /= numSteps
 
         # clipping

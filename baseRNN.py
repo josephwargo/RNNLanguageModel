@@ -57,7 +57,7 @@ class neuralNet(object):
         outputLayer = neuronLayer(
             prevLayerShape=hiddenLayerShapes[-1], outputShape=self.numEmbeddings, activation=outputActivation,
             batchSize=self.batchSize, clipVal=self.clipVal, learningRate=self.learningRate,
-            rnn=True, adam=adam)
+            rnn=False, adam=adam)
         self.layers['outputLayer'] = outputLayer
 
         self.currentText = None
